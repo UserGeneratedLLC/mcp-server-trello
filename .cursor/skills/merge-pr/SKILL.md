@@ -86,13 +86,37 @@ Incorporates upstream PR [delorenj/mcp-server-trello#<NUMBER>](https://github.co
 
 Delete the temp file after PR creation.
 
-### 7. Cleanup
+### 7. Merge the PR
+
+```bash
+gh pr merge <FORK_PR_NUMBER> --repo UserGeneratedLLC/mcp-server-trello --merge
+```
+
+Then pull the merged changes into the local main:
 
 ```bash
 git checkout main
+git pull origin main
 ```
 
-Return the PR URL to the user.
+### 8. Rebuild
+
+Install dependencies and rebuild to pick up any changes:
+
+```bash
+npm install
+npm run build
+```
+
+### 9. Cleanup
+
+Delete the local feature branch since it's now merged:
+
+```bash
+git branch -d <branch-name>
+```
+
+Return the merged PR URL to the user.
 
 ## Shell Notes
 
