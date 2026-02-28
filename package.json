@@ -56,7 +56,6 @@
     "access": "public"
   },
   "scripts": {
-    "prepare": "npm run build",
     "build": "esbuild src/index.ts --bundle --outdir=./build --platform=node --format=esm --packages=external",
     "build:types": "tsc --emitDeclarationOnly || echo 'Warning: Type declarations generation failed, but build succeeded'",
     "build:prod": "npm run build",
