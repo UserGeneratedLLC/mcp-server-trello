@@ -1003,6 +1003,49 @@ class TrelloServer {
       }
     );
 
+    this.server.registerTool(
+      'delete_checklist',
+      {
+        title: 'Delete Checklist',
+        description: 'Delete a checklist from a card',
+        inputSchema: {
+          checklistId: z.string().describe('ID of the checklist to delete'),
+        },
+      },
+      async ({ checklistId }) => {
+        try {
+          await this.trelloClient.deleteChecklist(checklistId);
+          return {
+            content: [{ type: 'text' as const, text: 'Checklist deleted successfully' }],
+          };
+        } catch (error) {
+          return this.handleError(error);
+        }
+      }
+    );
+
+    this.server.registerTool(
+      'delete_checklist_item',
+      {
+        title: 'Delete Checklist Item',
+        description: 'Delete an item from a checklist',
+        inputSchema: {
+          checklistId: z.string().describe('ID of the checklist containing the item'),
+          checkItemId: z.string().describe('ID of the checklist item to delete'),
+        },
+      },
+      async ({ checklistId, checkItemId }) => {
+        try {
+          await this.trelloClient.deleteChecklistItem(checklistId, checkItemId);
+          return {
+            content: [{ type: 'text' as const, text: 'Checklist item deleted successfully' }],
+          };
+        } catch (error) {
+          return this.handleError(error);
+        }
+      }
+    );
+
     // Member management tools
     this.server.registerTool(
       'get_board_members',

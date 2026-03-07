@@ -403,6 +403,33 @@ Get a complete checklist with all items and completion percentage.
   - `items`: Array of `CheckListItem` objects
   - `percentComplete`: Completion percentage (0-100)
 
+#### delete\_checklist
+
+Delete a checklist from a card.
+
+```typescript
+{
+  name: 'delete_checklist',
+  arguments: {
+    checklistId: string  // ID of the checklist to delete
+  }
+}
+```
+
+#### delete\_checklist\_item
+
+Delete an item from a checklist.
+
+```typescript
+{
+  name: 'delete_checklist_item',
+  arguments: {
+    checklistId: string,  // ID of the checklist containing the item
+    checkItemId: string   // ID of the checklist item to delete
+  }
+}
+```
+
 ### get\_card 🆕
 
 Get comprehensive details of a specific Trello card with human-level parity.
