@@ -780,6 +780,20 @@ export class TrelloClient {
     });
   }
 
+  async deleteChecklist(checklistId: string): Promise<boolean> {
+    return this.handleRequest(async () => {
+      await this.axiosInstance.delete(`/checklists/${checklistId}`);
+      return true;
+    });
+  }
+
+  async deleteChecklistItem(checklistId: string, checkItemId: string): Promise<boolean> {
+    return this.handleRequest(async () => {
+      await this.axiosInstance.delete(`/checklists/${checklistId}/checkItems/${checkItemId}`);
+      return true;
+    });
+  }
+
   private formatCardAsMarkdown(card: EnhancedTrelloCard): string {
     let markdown = '';
 
