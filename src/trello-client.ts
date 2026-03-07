@@ -16,6 +16,7 @@ import {
   TrelloComment,
   TrelloMember,
   TrelloLabelDetails,
+  TrelloSearchResult,
 } from './types.js';
 import { createTrelloRateLimiters } from './rate-limiter.js';
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
@@ -37,6 +38,7 @@ type TrelloRequestReturn =
   | TrelloChecklist
   | TrelloComment
   | EnhancedTrelloCard
+  | TrelloSearchResult
   | string
   | boolean
   | TrelloList
@@ -1116,6 +1118,34 @@ export class TrelloClient {
         data: base64Data,
         mimeType: attachment.mimeType || 'application/octet-stream',
         fileName: attachment.fileName || 'attachment',
+      };
+    });
+  }
+
+  async searchTrello(
+    query: string,
+    options?: {
+      modelTypes?: 'cards' | 'boards' | 'cards,boards';
+      idBoards?: string;
+      cardsLimit?: number;
+      boardsLimit?: number;
+      partial?: boolean;
+    }
+  ): Promise<TrelloSearchResult> {
+    return this.handleRequest(async () => {
+      const params: Record<string, unknown> = {
+        query,
+        modelTypes: options?.modelTypes ?? 'cards,boards',
+        cards_limit: options?.cardsLimit ?? 50,
+        boards_limit: options?.boardsLimit ?? 10,
+      };
+      if (options?.idBoards) params.idBoards = options.idBoards;
+      if (options?.partial !== undefined) params.partial = options.partial;
+
+      const response = await this.axiosInstance.get('/search', { params });
+      return {
+        cards: response.data.cards ?? [],
+        boards: response.data.boards ?? [],
       };
     });
   }
