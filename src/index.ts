@@ -34,6 +34,7 @@ class TrelloServer {
     });
 
     this.setupTools();
+    this.setupSearchTools();
     this.setupHealthEndpoints();
 
     // Error handling
@@ -1247,6 +1248,63 @@ class TrelloServer {
                 }, null, 2),
               },
             ],
+          };
+        } catch (error) {
+          return this.handleError(error);
+        }
+      }
+    );
+  }
+
+  private setupSearchTools() {
+    this.server.registerTool(
+      'search_trello',
+      {
+        title: 'Search Trello',
+        description:
+          'Search for cards and boards across your entire Trello workspace using a keyword query. ' +
+          'Returns matching cards and boards without needing to know which board or list they are on.',
+        inputSchema: {
+          query: z.string().describe('Search term to find cards and/or boards'),
+          modelTypes: z
+            .enum(['cards', 'boards', 'cards,boards'])
+            .optional()
+            .describe('What to search for: "cards", "boards", or "cards,boards" (default)'),
+          idBoards: z
+            .string()
+            .optional()
+            .describe('Comma-separated board IDs to scope the search, or "mine" for your boards'),
+          cardsLimit: z
+            .number()
+            .int()
+            .min(1)
+            .max(1000)
+            .optional()
+            .describe('Max number of cards to return (default 50)'),
+          boardsLimit: z
+            .number()
+            .int()
+            .min(1)
+            .max(1000)
+            .optional()
+            .describe('Max number of boards to return (default 10)'),
+          partial: z
+            .boolean()
+            .optional()
+            .describe('If true, enables prefix/partial matching'),
+        },
+      },
+      async ({ query, modelTypes, idBoards, cardsLimit, boardsLimit, partial }) => {
+        try {
+          const result = await this.trelloClient.searchTrello(query, {
+            modelTypes,
+            idBoards,
+            cardsLimit,
+            boardsLimit,
+            partial,
+          });
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
           };
         } catch (error) {
           return this.handleError(error);
