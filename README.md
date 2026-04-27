@@ -205,7 +205,12 @@ TRELLO_BOARD_ID=your-board-id
 
 # Optional: Initial workspace ID (can be changed later using set_active_workspace)
 TRELLO_WORKSPACE_ID=your-workspace-id
+
+# Optional: HTTPS proxy URL (for corporate proxies or restricted networks)
+https_proxy=http://your-proxy:8080
 ```
+
+> **Proxy Support:** If you're behind a corporate proxy or in an environment that routes traffic through a proxy, set the `https_proxy` or `HTTPS_PROXY` environment variable. The server will automatically route all Trello API requests through the specified proxy.
 
 You can get these values from:
 
@@ -403,6 +408,26 @@ Get a complete checklist with all items and completion percentage.
   - `items`: Array of `CheckListItem` objects
   - `percentComplete`: Completion percentage (0-100)
 
+#### update\_checklist\_item
+
+Update an existing checklist item.
+
+```typescript
+{
+  name: 'update_checklist_item',
+  arguments: {
+    cardId: string,                          // ID of the card containing the checklist item
+    checkItemId: string,                     // ID of the checklist item to update
+    name?: string,                           // Optional: new checklist item text
+    state?: 'complete' | 'incomplete',       // Optional: new checklist item state
+    pos?: number | 'top' | 'bottom',         // Optional: new checklist item position
+    due?: string | null,                     // Optional: ISO 8601 due date, or null to clear it
+    dueReminder?: number | null,             // Optional: reminder offset in minutes, or null to clear it
+    idMember?: string | null                 // Optional: member ID to assign, or null to clear it
+  }
+}
+```
+
 #### delete\_checklist
 
 Delete a checklist from a card.
@@ -418,13 +443,27 @@ Delete a checklist from a card.
 
 #### delete\_checklist\_item
 
-Delete an item from a checklist.
+Delete an item from a checklist using the checklist-scoped Trello endpoint.
 
 ```typescript
 {
   name: 'delete_checklist_item',
   arguments: {
     checklistId: string,  // ID of the checklist containing the item
+    checkItemId: string   // ID of the checklist item to delete
+  }
+}
+```
+
+#### delete\_checklist\_item\_by\_card
+
+Delete a checklist item using the card-scoped Trello endpoint. Useful when you have the card ID handy but not the checklist ID.
+
+```typescript
+{
+  name: 'delete_checklist_item_by_card',
+  arguments: {
+    cardId: string,       // ID of the card containing the checklist item
     checkItemId: string   // ID of the checklist item to delete
   }
 }
@@ -574,6 +613,20 @@ Send a list to the archive.
     boardId?: string, // Optional: ID of the board (uses default if not provided)
     listId: string    // ID of the list to archive
   }
+}
+```
+
+### update\_list\_position
+
+Update the position of a list on the board. Trello uses fractional indexing: each list has a float position, and to place a list between two others, use the average of their positions (e.g., between pos 1024 and 2048, use 1536). Use `"top"`/`"bottom"` shortcuts to move to the edges.
+
+```typescript
+{
+  name: 'update_list_position',
+  arguments: {
+    listId: string,              // ID of the list to reposition
+    position: string             // "top", "bottom", or a positive numeric string (e.g. "1536")
+  }
 }
 ```
 

@@ -69,11 +69,15 @@ class TrelloServer {
             .optional()
             .describe('ID of the Trello board (uses default if not provided)'),
           listId: z.string().describe('ID of the Trello list'),
+          fields: z
+            .string()
+            .optional()
+            .describe('Comma-separated list of fields to return (e.g., "name,idShort,labels,due,dueComplete"). Omit for all fields.'),
         },
       },
-      async ({ boardId, listId }) => {
+      async ({ listId, fields }) => {
         try {
-          const cards = await this.trelloClient.getCardsByList(boardId, listId);
+          const cards = await this.trelloClient.getCardsByList(listId, fields);
           return {
             content: [{ type: 'text' as const, text: JSON.stringify(cards, null, 2) }],
           };
@@ -124,11 +128,19 @@ class TrelloServer {
             .optional()
             .default(10)
             .describe('Number of activities to fetch (default: 10)'),
+          since: z
+            .string()
+            .optional()
+            .describe('Only return actions after this date (ISO 8601) or action ID'),
+          before: z
+            .string()
+            .optional()
+            .describe('Only return actions before this date (ISO 8601) or action ID'),
         },
       },
-      async ({ boardId, limit }) => {
+      async ({ boardId, limit, since, before }) => {
         try {
-          const activity = await this.trelloClient.getRecentActivity(boardId, limit);
+          const activity = await this.trelloClient.getRecentActivity(boardId, limit, since, before);
           return {
             content: [{ type: 'text' as const, text: JSON.stringify(activity, null, 2) }],
           };
@@ -311,6 +323,45 @@ class TrelloServer {
       async ({ boardId, listId }) => {
         try {
           const list = await this.trelloClient.archiveList(boardId, listId);
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify(list, null, 2) }],
+          };
+        } catch (error) {
+          return this.handleError(error);
+        }
+      }
+    );
+
+    // Update list position
+    this.server.registerTool(
+      'update_list_position',
+      {
+        title: 'Update List Position',
+        description:
+          'Update the position of a list on the board. Trello uses fractional indexing: each list has a float position, and to place a list between two others, use the average of their positions (e.g., between pos 1024 and 2048, use 1536). Use "top"/"bottom" shortcuts to move to the edges.',
+        inputSchema: {
+          listId: z.string().describe('ID of the list to reposition'),
+          position: z
+            .string()
+            .refine(
+              (val) => {
+                if (val === 'top' || val === 'bottom') return true;
+                const num = Number(val);
+                return num > 0 && isFinite(num);
+              },
+              {
+                message: "Position must be 'top', 'bottom', or a positive finite numeric string.",
+              }
+            )
+            .describe(
+              'New position: "top" (move to leftmost), "bottom" (move to rightmost), or a numeric string (e.g. "1536"). To place between two lists, use the average of their pos values.'
+            ),
+        },
+      },
+      async ({ listId, position }) => {
+        try {
+          const parsedPosition = position === 'top' || position === 'bottom' ? position : Number(position);
+          const list = await this.trelloClient.updateListPosition(listId, parsedPosition);
           return {
             content: [{ type: 'text' as const, text: JSON.stringify(list, null, 2) }],
           };
@@ -982,18 +1033,46 @@ class TrelloServer {
       'update_checklist_item',
       {
         title: 'Update Checklist Item',
-        description: 'Update a checklist item state (mark as complete or incomplete)',
+        description: 'Update a checklist item name, state, position, due date, reminder, or assigned member',
         inputSchema: {
           cardId: z.string().describe('ID of the card containing the checklist item'),
           checkItemId: z.string().describe('ID of the checklist item to update'),
           state: z
             .enum(['complete', 'incomplete'])
+            .optional()
             .describe('New state for the checklist item'),
+          name: z.string().optional().describe('New text for the checklist item'),
+          pos: z
+            .union([z.number(), z.enum(['top', 'bottom'])])
+            .optional()
+            .describe('New position for the checklist item'),
+          due: z
+            .string()
+            .nullable()
+            .optional()
+            .describe('New due date for the checklist item in ISO 8601 format, or null to clear it'),
+          dueReminder: z
+            .number()
+            .nullable()
+            .optional()
+            .describe('Reminder offset in minutes before due date, or null to clear it'),
+          idMember: z
+            .string()
+            .nullable()
+            .optional()
+            .describe('Member ID to assign to the checklist item, or null to clear it'),
         },
       },
-      async ({ cardId, checkItemId, state }) => {
+      async ({ cardId, checkItemId, name, state, pos, due, dueReminder, idMember }) => {
         try {
-          const item = await this.trelloClient.updateChecklistItem(cardId, checkItemId, state);
+          const item = await this.trelloClient.updateChecklistItem(cardId, checkItemId, {
+            name,
+            state,
+            pos,
+            due,
+            dueReminder,
+            idMember,
+          });
           return {
             content: [{ type: 'text' as const, text: JSON.stringify(item, null, 2) }],
           };
@@ -1028,7 +1107,7 @@ class TrelloServer {
       'delete_checklist_item',
       {
         title: 'Delete Checklist Item',
-        description: 'Delete an item from a checklist',
+        description: 'Delete an item from a checklist (by checklist ID)',
         inputSchema: {
           checklistId: z.string().describe('ID of the checklist containing the item'),
           checkItemId: z.string().describe('ID of the checklist item to delete'),
@@ -1039,6 +1118,28 @@ class TrelloServer {
           await this.trelloClient.deleteChecklistItem(checklistId, checkItemId);
           return {
             content: [{ type: 'text' as const, text: 'Checklist item deleted successfully' }],
+          };
+        } catch (error) {
+          return this.handleError(error);
+        }
+      }
+    );
+
+    this.server.registerTool(
+      'delete_checklist_item_by_card',
+      {
+        title: 'Delete Checklist Item By Card',
+        description: 'Delete a checklist item from a card (uses the card-scoped Trello endpoint)',
+        inputSchema: {
+          cardId: z.string().describe('ID of the card containing the checklist item'),
+          checkItemId: z.string().describe('ID of the checklist item to delete'),
+        },
+      },
+      async ({ cardId, checkItemId }) => {
+        try {
+          const deleted = await this.trelloClient.deleteChecklistItemByCard(cardId, checkItemId);
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ deleted }, null, 2) }],
           };
         } catch (error) {
           return this.handleError(error);
@@ -1208,6 +1309,146 @@ class TrelloServer {
           await this.trelloClient.deleteLabel(labelId);
           return {
             content: [{ type: 'text' as const, text: 'Label deleted successfully' }],
+          };
+        } catch (error) {
+          return this.handleError(error);
+        }
+      }
+    );
+
+    // Copy a card (supports cross-board copy)
+    this.server.registerTool(
+      'copy_card',
+      {
+        title: 'Copy Card',
+        description:
+          'Copy/duplicate a Trello card to any list (even on a different board). Copies all properties by default including checklists, attachments, comments, labels, etc.',
+        inputSchema: {
+          sourceCardId: z.string().describe('ID of the source card to copy'),
+          listId: z
+            .string()
+            .describe('ID of the destination list (can be on a different board)'),
+          name: z
+            .string()
+            .optional()
+            .describe('Override the name of the copied card (defaults to source card name)'),
+          description: z
+            .string()
+            .optional()
+            .describe('Override the description of the copied card'),
+          keepFromSource: z
+            .string()
+            .optional()
+            .describe(
+              'Comma-separated list of properties to copy: "all" (default), or any combination of: attachments, checklists, comments, customFields, due, start, labels, members, stickers'
+            ),
+          pos: z
+            .string()
+            .optional()
+            .describe('Position of the new card: "top", "bottom", or a positive float'),
+        },
+      },
+      async ({ sourceCardId, listId, name, description, keepFromSource, pos }) => {
+        try {
+          const card = await this.trelloClient.copyCard({
+            sourceCardId,
+            listId,
+            name,
+            description,
+            keepFromSource,
+            pos,
+          });
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify(card, null, 2) }],
+          };
+        } catch (error) {
+          return this.handleError(error);
+        }
+      }
+    );
+
+    // Copy a checklist from one card to another
+    this.server.registerTool(
+      'copy_checklist',
+      {
+        title: 'Copy Checklist',
+        description:
+          'Copy a checklist (with all its items) from one card to another. Works across different boards.',
+        inputSchema: {
+          sourceChecklistId: z
+            .string()
+            .describe('ID of the source checklist to copy'),
+          cardId: z
+            .string()
+            .describe('ID of the destination card to copy the checklist to'),
+          name: z
+            .string()
+            .optional()
+            .describe('Override the name of the copied checklist (defaults to source checklist name)'),
+          pos: z
+            .string()
+            .optional()
+            .describe('Position of the new checklist: "top", "bottom", or a positive number'),
+        },
+      },
+      async ({ sourceChecklistId, cardId, name, pos }) => {
+        try {
+          const checklist = await this.trelloClient.copyChecklist({
+            sourceChecklistId,
+            cardId,
+            name,
+            pos,
+          });
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify(checklist, null, 2) }],
+          };
+        } catch (error) {
+          return this.handleError(error);
+        }
+      }
+    );
+
+    // Add multiple cards to a list
+    this.server.registerTool(
+      'add_cards_to_list',
+      {
+        title: 'Add Cards to List',
+        description:
+          'Add multiple cards to a list in one operation. Cards are created sequentially (Trello API does not support batch writes). Rate limiting is handled automatically.',
+        inputSchema: {
+          listId: z.string().describe('ID of the list to add cards to'),
+          cards: z
+            .array(
+              z.object({
+                name: z.string().describe('Name of the card'),
+                description: z.string().optional().describe('Description of the card'),
+                dueDate: z
+                  .string()
+                  .optional()
+                  .describe('Due date for the card (ISO 8601 format)'),
+                start: z
+                  .string()
+                  .optional()
+                  .describe('Start date for the card (YYYY-MM-DD format)'),
+                labels: z
+                  .array(z.string())
+                  .optional()
+                  .describe('Array of label IDs to apply to the card'),
+              })
+            )
+            .describe('Array of cards to create (max 50)'),
+        },
+      },
+      async ({ listId, cards }) => {
+        try {
+          const results = await this.trelloClient.batchAddCards(listId, cards);
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: JSON.stringify(results, null, 2),
+              },
+            ],
           };
         } catch (error) {
           return this.handleError(error);
