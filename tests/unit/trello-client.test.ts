@@ -42,12 +42,17 @@ vi.mock('fs/promises', () => ({
   access: vi.fn(async () => {}),
 }));
 
-function createClient(overrides?: { boardId?: string; defaultBoardId?: string }) {
+function createClient(overrides?: {
+  boardId?: string;
+  defaultBoardId?: string;
+  allowedWorkspaceIds?: string[];
+}) {
   return new TrelloClient({
     apiKey: 'test-key',
     token: 'test-token',
     boardId: overrides?.boardId,
     defaultBoardId: overrides?.defaultBoardId,
+    allowedWorkspaceIds: overrides?.allowedWorkspaceIds,
   });
 }
 
@@ -65,6 +70,22 @@ describe('TrelloClient', () => {
           params: { key: 'test-key', token: 'test-token' },
         })
       );
+    });
+
+    it('should not enable workspace restrictions when allowed workspaces are unset or empty', () => {
+      expect(createClient().hasWorkspaceRestriction).toBe(false);
+      expect(createClient({ allowedWorkspaceIds: [] }).hasWorkspaceRestriction).toBe(false);
+    });
+  });
+
+  describe('workspace restriction', () => {
+    it('should reject access to a non-allowed workspace before making a request', async () => {
+      const client = createClient({ allowedWorkspaceIds: ['allowed-workspace'] });
+
+      await expect(client.listBoardsInWorkspace('blocked-workspace')).rejects.toThrow(
+        "Access to workspace 'blocked-workspace' is not allowed"
+      );
+      expect(mockAxiosInstance.get).not.toHaveBeenCalled();
     });
   });
 
@@ -134,6 +155,7 @@ describe('TrelloClient', () => {
         name: 'New Card',
         description: 'A description',
         dueDate: '2024-12-31T00:00:00Z',
+        dueReminder: 0,
         start: '2024-12-01',
         labels: ['label1'],
       });
@@ -143,6 +165,7 @@ describe('TrelloClient', () => {
         name: 'New Card',
         desc: 'A description',
         due: '2024-12-31T00:00:00Z',
+        dueReminder: 0,
         start: '2024-12-01',
         idLabels: ['label1'],
       });
@@ -160,6 +183,7 @@ describe('TrelloClient', () => {
         name: 'Card',
         desc: undefined,
         due: undefined,
+        dueReminder: undefined,
         start: undefined,
         idLabels: undefined,
       });
@@ -174,6 +198,7 @@ describe('TrelloClient', () => {
       await client.updateCard(undefined, {
         cardId: 'c1',
         name: 'Updated',
+        dueReminder: null,
         dueComplete: true,
       });
 
@@ -181,8 +206,29 @@ describe('TrelloClient', () => {
         name: 'Updated',
         desc: undefined,
         due: undefined,
+        dueReminder: null,
         start: undefined,
         dueComplete: true,
+        idLabels: undefined,
+      });
+    });
+
+    it('should pass numeric due reminder value', async () => {
+      mockAxiosInstance.put.mockResolvedValue({ data: { id: 'c1' } });
+
+      const client = createClient();
+      await client.updateCard(undefined, {
+        cardId: 'c1',
+        dueReminder: 60,
+      });
+
+      expect(mockAxiosInstance.put).toHaveBeenCalledWith('/cards/c1', {
+        name: undefined,
+        desc: undefined,
+        due: undefined,
+        dueReminder: 60,
+        start: undefined,
+        dueComplete: undefined,
         idLabels: undefined,
       });
     });
@@ -251,6 +297,29 @@ describe('TrelloClient', () => {
       await client.archiveList(undefined, 'l1');
 
       expect(mockAxiosInstance.put).toHaveBeenCalledWith('/lists/l1/closed', { value: true });
+    });
+  });
+
+  describe('updateList', () => {
+    it('should update list metadata without position fields', async () => {
+      const list = { id: 'l1', name: 'Updated List' };
+      mockAxiosInstance.put.mockResolvedValue({ data: list });
+
+      const client = createClient();
+      const result = await client.updateList('l1', {
+        name: 'Updated List',
+        closed: false,
+        subscribed: true,
+        idBoard: 'b2',
+      });
+
+      expect(mockAxiosInstance.put).toHaveBeenCalledWith('/lists/l1', {
+        name: 'Updated List',
+        closed: false,
+        subscribed: true,
+        idBoard: 'b2',
+      });
+      expect(result).toEqual(list);
     });
   });
 
@@ -426,6 +495,41 @@ describe('TrelloClient', () => {
       await client.deleteLabel('lbl1');
 
       expect(mockAxiosInstance.delete).toHaveBeenCalledWith('/labels/lbl1');
+    });
+  });
+
+  describe('custom fields', () => {
+    it('should set list custom fields using idValue', async () => {
+      const item = { id: 'item1', idCustomField: 'field1', idValue: 'option1' };
+      mockAxiosInstance.put.mockResolvedValue({ data: item });
+
+      const client = createClient();
+      const result = await client.updateCardCustomField('card1', 'field1', {
+        type: 'list',
+        value: 'option1',
+      });
+
+      expect(mockAxiosInstance.put).toHaveBeenCalledWith(
+        '/cards/card1/customField/field1/item',
+        { idValue: 'option1' }
+      );
+      expect(result).toEqual(item);
+    });
+
+    it('should clear custom fields with value and idValue empty strings', async () => {
+      const item = { id: 'item1', idCustomField: 'field1', value: null };
+      mockAxiosInstance.put.mockResolvedValue({ data: item });
+
+      const client = createClient();
+      const result = await client.updateCardCustomField('card1', 'field1', {
+        type: 'clear',
+      });
+
+      expect(mockAxiosInstance.put).toHaveBeenCalledWith(
+        '/cards/card1/customField/field1/item',
+        { value: '', idValue: '' }
+      );
+      expect(result).toEqual(item);
     });
   });
 
@@ -608,6 +712,130 @@ describe('TrelloClient', () => {
       expect(mockAxiosInstance.get).toHaveBeenCalledWith('/cards/c1/actions', {
         params: {},
       });
+    });
+  });
+
+  describe('attachDataToCard', () => {
+    const attachment = { id: 'a1', name: 'notes.md' };
+
+    it('should upload raw base64 with explicit mime type and name', async () => {
+      mockAxiosInstance.post.mockResolvedValue({ data: attachment });
+      const client = createClient();
+
+      const result = await client.attachDataToCard(
+        undefined,
+        'c1',
+        Buffer.from('hello').toString('base64'),
+        'notes.md',
+        'text/markdown'
+      );
+
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith(
+        '/cards/c1/attachments',
+        expect.anything(),
+        expect.objectContaining({ headers: expect.any(Object) })
+      );
+      const form = mockAxiosInstance.post.mock.calls[0][1];
+      expect(form.getBuffer().toString()).toContain('text/markdown');
+      expect(form.getBuffer().toString()).toContain('notes.md');
+      expect(result).toEqual(attachment);
+    });
+
+    it('should extract mime type and data from a data URL', async () => {
+      mockAxiosInstance.post.mockResolvedValue({ data: attachment });
+      const client = createClient();
+
+      const dataUrl = `data:application/pdf;base64,${Buffer.from('pdf-bytes').toString('base64')}`;
+      await client.attachDataToCard(undefined, 'c1', dataUrl, 'report.pdf');
+
+      const form = mockAxiosInstance.post.mock.calls[0][1];
+      expect(form.getBuffer().toString()).toContain('application/pdf');
+      expect(form.getBuffer().toString()).toContain('report.pdf');
+    });
+
+    it('should infer mime type from filename extension when not provided', async () => {
+      mockAxiosInstance.post.mockResolvedValue({ data: attachment });
+      const client = createClient();
+
+      await client.attachDataToCard(
+        undefined,
+        'c1',
+        Buffer.from('# hi').toString('base64'),
+        'notes.md'
+      );
+
+      const form = mockAxiosInstance.post.mock.calls[0][1];
+      expect(form.getBuffer().toString()).toContain('text/markdown');
+    });
+
+    it('should default to application/octet-stream when no mime hints exist', async () => {
+      mockAxiosInstance.post.mockResolvedValue({ data: attachment });
+      const client = createClient();
+
+      await client.attachDataToCard(
+        undefined,
+        'c1',
+        Buffer.from('blob').toString('base64')
+      );
+
+      const form = mockAxiosInstance.post.mock.calls[0][1];
+      expect(form.getBuffer().toString()).toContain('application/octet-stream');
+    });
+
+    it('should let an explicit mimeType override one parsed from a data URL', async () => {
+      mockAxiosInstance.post.mockResolvedValue({ data: attachment });
+      const client = createClient();
+
+      const dataUrl = `data:application/octet-stream;base64,${Buffer.from('x').toString('base64')}`;
+      await client.attachDataToCard(undefined, 'c1', dataUrl, 'a.pdf', 'application/pdf');
+
+      const form = mockAxiosInstance.post.mock.calls[0][1];
+      expect(form.getBuffer().toString()).toContain('application/pdf');
+      expect(form.getBuffer().toString()).not.toContain('application/octet-stream');
+    });
+
+    it('should reject a malformed data URL without uploading', async () => {
+      const client = createClient();
+      await expect(
+        client.attachDataToCard(undefined, 'c1', 'data:not-valid', 'x.bin')
+      ).rejects.toThrow();
+      expect(mockAxiosInstance.post).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('attachImageDataToCard', () => {
+    const attachment = { id: 'a2', name: 'screenshot.png' };
+
+    it('should default to image/png and a screenshot filename when omitted', async () => {
+      mockAxiosInstance.post.mockResolvedValue({ data: attachment });
+      const client = createClient();
+
+      await client.attachImageDataToCard(
+        undefined,
+        'c1',
+        Buffer.from('png-bytes').toString('base64')
+      );
+
+      const form = mockAxiosInstance.post.mock.calls[0][1];
+      expect(form.getBuffer().toString()).toContain('image/png');
+      expect(form.getBuffer().toString()).toMatch(/screenshot-\d+\.png/);
+    });
+
+    it('should respect a caller-supplied mime type and name', async () => {
+      mockAxiosInstance.post.mockResolvedValue({ data: attachment });
+      const client = createClient();
+
+      await client.attachImageDataToCard(
+        undefined,
+        'c1',
+        Buffer.from('jpg-bytes').toString('base64'),
+        'photo.jpg',
+        'image/jpeg'
+      );
+
+      const form = mockAxiosInstance.post.mock.calls[0][1];
+      expect(form.getBuffer().toString()).toContain('image/jpeg');
+      expect(form.getBuffer().toString()).toContain('photo.jpg');
     });
   });
 

@@ -1,3 +1,34 @@
-[tools]
-node = "latest"
-pnpm = "latest"
+# https://mise.jdx.dev/configuration.html
+
+[env]
+_.path = [".mise/scripts"]
+_.file = [".env"]
+CODEX_HOME = { value = ".codex", path = true }
+
+# This block will handle the linking of
+# agent files to the main AGENTS.md file.
+#
+# TODO: Ensure this works for all levels of nesting.
+# i.e. All linked agent files MUST be siblings at
+# any given level of nesting.
+[hooks]
+enter = "{{config_root}}/.mise/scripts/link-agentfiles.sh"
+
+[[watch_files]]
+patterns = ["AGENTS.md"]
+task = "link-agentfiles"
+
+[tasks.link-agentfiles]
+description = "Symlink all agent files to AGENTS.md"
+run = "{{config_root}}/.mise/scripts/link-agentfiles.sh"
+
+[tasks.package]
+description = "Refresh skill assets for packaging"
+run = "{{config_root}}/scripts/build-skill-assets.sh"
+
+[tasks.ci]
+description = "Run tests and refresh the skill source bundle"
+run = [
+  "npm run test",
+  "{{config_root}}/scripts/build-skill-assets.sh",
+]

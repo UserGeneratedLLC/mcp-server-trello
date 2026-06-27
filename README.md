@@ -39,154 +39,40 @@ For a detailed list of changes, please refer to the [CHANGELOG.md](CHANGELOG.md)
 
 ## Installation
 
-### 🚀 Install from MCP Registry (Recommended)
+This repository is distributed as a **BMAD-compatible skill package** for the
+Trello MCP server. Install the `skill/` directory through your agent's skill
+management workflow, or place it in the agent's skills directory.
 
-The MCP Server Trello is now available in the official MCP Registry\! MCP clients can automatically discover and install this server.
-
-For clients that support the MCP Registry:
-
-1.  Search for "mcp-server-trello" or "io.github.delorenj/mcp-server-trello"
-2.  Install directly from the registry
-3.  Configure with your Trello credentials
-
-### 🚀 Quick Start with Bun (Fastest)
-
-If you have [Bun](https://bun.sh) installed, using `bunx` is the fastest way to run the server:
-
-```json
-{
-  "mcpServers": {
-    "trello": {
-      "command": "bunx",
-      "args": ["@delorenj/mcp-server-trello"],
-      "env": {
-        "TRELLO_API_KEY": "your-api-key",
-        "TRELLO_TOKEN": "your-token"
-      }
-    }
-  }
-}
-```
-
-### Quick Start with npx / pnpx / bunx
-
-You can still use `npx` or `pnpx`. This doesn't require a global install and will work just fine, though `bunx` (above) is faster.
-
-```json
-{
-  "mcpServers": {
-    "trello": {
-      "command": "bunx",
-      "args": ["@delorenj/mcp-server-trello"],
-      "env": {
-        "TRELLO_API_KEY": "your-api-key",
-        "TRELLO_TOKEN": "your-token"
-      }
-    }
-  }
-}
-```
-
-Or if you're using mise, you can explicitly execute `bunx` with `mise exec`:
-
-```json
-{
-  "mcpServers": {
-    "trello": {
-      "command": "mise",
-      "args": ["x", "--", "bunx", "@delorenj/mcp-server-trello"],
-      "env": {
-        "TRELLO_API_KEY": "your-api-key",
-        "TRELLO_TOKEN": "your-token"
-      }
-    }
-  }
-}
-```
-
-To connect a Trello workspace, you'll need to manually retrieve a `TRELLO_TOKEN` once per workspace. After setting up your Trello Power-Up, visit the following URL:
-
-```
-https://trello.com/1/authorize?expiration=never&name=YOUR_APP_NAME&scope=read,write&response_type=token&key=YOUR_API_KEY
-```
-
-Replace:
-
-  * `YOUR_APP_NAME` with a name for your application (e.g., "My Trello Integration"). This name is shown to the user on the Trello authorization screen.
-  * `YOUR_API_KEY` with the API key for your Trello Power-Up
-
-This will generate the token required for integration.
-
-> [\!NOTE]
-> The `expiration=never` parameter creates a token that does not expire. For enhanced security, consider using `expiration=30days` and renewing the token periodically if your setup allows for it.
-
-#### Don't have Bun?
-
-The simplest way to get `bun` (and thus `bunx`) is through [mise](https://mise.jdx.dev/):
+When an agent activates the skill, it follows `skill/SKILL.md`. On first use,
+the agent runs the bundled installer:
 
 ```bash
-# Install mise (if you don't have it)
-curl https://mise.run | sh
-
-# Install bun and make the @latest version your system default
-mise use bun@latest -g
-
-# Or just run `mise install` from the project directory to install Bun locally
-cd /path/to/mcp-server-trello
-mise install
+bash skill/scripts/install.sh
 ```
 
-### Installing via npm
+The installer builds the MCP server from `skill/assets/source/` when Bun is
+available. If Bun is unavailable, it falls back to the published Smithery
+install path for `@delorenj/mcp-server-trello` and creates the same local
+`build/index.js` command path used by the skill activation check.
 
-If you prefer using `npm` directly:
+## Skill package structure
 
-```bash
-npm install -g @delorenj/mcp-server-trello
-```
+The skill is the agent-facing entry point for this repository.
 
-*(A fast alternative is `bun add -g @delorenj/mcp-server-trello`)*
+- `skill/SKILL.md`: Activation, routing, and agent workflow rules.
+- `skill/scripts/install.sh`: First-run installer for the bundled server.
+- `skill/references/trello-mcp/`: Focused references for setup, tools,
+  workflows, and gotchas.
+- `skill/assets/source/`: Bundled MCP server source used for local builds.
 
-Then use `npx mcp-server-trello` as the command in your MCP configuration.
+For AI agents, start with `skill/SKILL.md` rather than this README. The README
+is the human-facing overview; the skill references are the operational surface
+for tool selection and Trello workflow rules.
 
-### Installing via Smithery
-
-To install Trello Server for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@delorenj/mcp-server-trello):
-
-```bash
-# Using bunx (recommended)
-bunx -y @smithery/cli install @delorenj/mcp-server-trello --client claude
-
-# Using npx
-npx -y @smithery/cli install @delorenj/mcp-server-trello --client claude
-```
-
-### Docker Installation
-
-For containerized environments:
-
-1.  Clone the repository:
-
-<!-- end list -->
+Maintainers can refresh the bundled source before packaging with:
 
 ```bash
-git clone https://github.com/delorenj/mcp-server-trello
-cd mcp-server-trello
-```
-
-2.  Copy the environment template and fill in your Trello credentials:
-
-<!-- end list -->
-
-```bash
-cp .env.template .env
-```
-
-3.  Build and run with Docker Compose:
-
-<!-- end list -->
-
-```bash
-docker compose up --build
+mise run package
 ```
 
 ## Configuration
@@ -208,6 +94,10 @@ TRELLO_WORKSPACE_ID=your-workspace-id
 
 # Optional: HTTPS proxy URL (for corporate proxies or restricted networks)
 https_proxy=http://your-proxy:8080
+
+# Optional: Restrict access to specific workspaces (comma-separated IDs)
+# If set, only the listed workspaces will be accessible via MCP tools
+TRELLO_ALLOWED_WORKSPACES=workspace-id-1,workspace-id-2
 ```
 
 > **Proxy Support:** If you're behind a corporate proxy or in an environment that routes traffic through a proxy, set the `https_proxy` or `HTTPS_PROXY` environment variable. The server will automatically route all Trello API requests through the specified proxy.
@@ -234,6 +124,29 @@ Starting with version 0.3.0, the MCP server supports multiple ways to work with 
        - Similarly, you can set and persist an active workspace using `set_active_workspace`
 
 This allows you to work with multiple boards and workspaces without restarting the server.
+
+### Workspace Access Restriction
+
+You can optionally restrict MCP access to specific workspaces using the `TRELLO_ALLOWED_WORKSPACES` environment variable. This is useful for:
+
+- **Security**: Limiting AI agent access to only approved workspaces
+- **Multi-tenant setups**: Ensuring agents only access relevant workspaces
+- **Testing**: Isolating test environments from production data
+
+When `TRELLO_ALLOWED_WORKSPACES` is set:
+- `list_workspaces` only returns workspaces in the allowed list
+- `list_boards` only returns boards from allowed workspaces
+- `set_active_workspace` rejects workspaces not in the allowed list
+- `list_boards_in_workspace` rejects non-allowed workspace IDs
+- `create_board` rejects creation in non-allowed workspaces
+
+Example configuration:
+```bash
+# Only allow access to two specific workspaces
+TRELLO_ALLOWED_WORKSPACES=697c549ce04dc460af133a75,5f8a3b2c1d4e5f6a7b8c9d0e
+```
+
+If `TRELLO_ALLOWED_WORKSPACES` is not set or empty, all workspaces the token has access to will be available (default behaviour).
 
 #### Example Workflow
 
@@ -616,6 +529,23 @@ Send a list to the archive.
 }
 ```
 
+### update\_list
+
+Update a list's name, archive state, subscription state, or board. Use `update_list_position` to reorder lists within a board.
+
+```typescript
+{
+  name: 'update_list',
+  arguments: {
+    listId: string,          // ID of the list to update
+    name?: string,           // Optional: New name for the list
+    closed?: boolean,        // Optional: Whether to close (archive) the list
+    subscribed?: boolean,    // Optional: Whether to subscribe to the list
+    idBoard?: string         // Optional: ID of a board to move the list to
+  }
+}
+```
+
 ### update\_list\_position
 
 Update the position of a list on the board. Trello uses fractional indexing: each list has a float position, and to place a list between two others, use the average of their positions (e.g., between pos 1024 and 2048, use 1536). Use `"top"`/`"bottom"` shortcuts to move to the edges.
@@ -818,6 +748,51 @@ s; name: 'get_active_board_info',
   arguments: {}
 }
 ```
+
+### Custom Field Management Tools
+
+> **Note:** Custom fields require Trello Standard plan or higher.
+
+#### get\_board\_custom\_fields
+
+Get all custom field definitions on a board. For dropdown/list fields, also returns the available options with their IDs.
+
+```typescript
+{
+  name: 'get_board_custom_fields',
+  arguments: {
+    boardId?: string  // Optional: ID of the board (uses default if not provided)
+  }
+}
+```
+
+**Returns:** Array of custom field definitions including:
+- Field ID, name, type (`text`, `number`, `checkbox`, `date`, `list`)
+- For `list` type fields: available options with IDs (use these IDs when setting values)
+
+#### update\_card\_custom\_field
+
+Set or clear a custom field value on a card.
+
+```typescript
+{
+  name: 'update_card_custom_field',
+  arguments: {
+    cardId: string,       // ID of the card to update
+    customFieldId: string,// ID of the custom field definition
+    type: string,         // Field type: 'text' | 'number' | 'checkbox' | 'date' | 'list' | 'clear'
+    value?: string        // The value to set (not needed when type is 'clear')
+  }
+}
+```
+
+**Value format by type:**
+- `text`: any string
+- `number`: numeric string (e.g. `"42.5"`)
+- `checkbox`: `"true"` or `"false"`
+- `date`: ISO 8601 string (e.g. `"2025-12-31T00:00:00.000Z"`)
+- `list`: option ID from `get_board_custom_fields`
+- `clear`: omit value to remove the field value
 
 ## Integration Examples
 
