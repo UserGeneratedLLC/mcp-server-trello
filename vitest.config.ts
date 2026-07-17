@@ -9,5 +9,25 @@ export default defineConfig({
     include: ['tests/**/*.test.ts'],
     testTimeout: 30000,
     env: dotenvResult.parsed,
+    coverage: {
+      provider: 'v8',
+      all: true,
+      include: ['src/**/*.ts'],
+      exclude: ['src/**/*.d.ts', 'src/evals/**'],
+      reporter: ['text-summary', 'json-summary', 'html'],
+      // Baseline ratchet toward a 70% target. The floor starts at the current
+      // watermark so `main` stays green; `autoUpdate` raises these numbers as
+      // coverage improves (never lowers them), so CI fails any PR that drops
+      // coverage below the best we've ever achieved. Goal: climb all four to 70.
+      // Floors recalibrated to this fork's watermark (fork carries extra
+      // untested tools vs. upstream, which diluted upstream's numbers).
+      thresholds: {
+        autoUpdate: true,
+        lines: 20.9,
+        statements: 20.36,
+        functions: 30.43,
+        branches: 19.56,
+      },
+    },
   },
 });

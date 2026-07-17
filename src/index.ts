@@ -303,6 +303,52 @@ class TrelloServer {
       }
     );
 
+    // ─── Watch Card (subscribe/unsubscribe) ──
+    this.server.registerTool(
+      'watch_card',
+      {
+        title: 'Watch Card',
+        description: 'Subscribe or unsubscribe from watching a card for activity notifications',
+        inputSchema: {
+          cardId: z.string().describe('ID of the card to watch/unwatch'),
+          subscribed: z.boolean().describe('Set to true to start watching, false to stop'),
+        },
+      },
+      async ({ cardId, subscribed }) => {
+        try {
+          const card = await this.trelloClient.watchCard(cardId, subscribed);
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify(card, null, 2) }],
+          };
+        } catch (error) {
+          return this.handleError(error);
+        }
+      }
+    );
+
+    // ─── Watch List (subscribe/unsubscribe) ──
+    this.server.registerTool(
+      'watch_list',
+      {
+        title: 'Watch List',
+        description: 'Subscribe or unsubscribe from watching a list for activity notifications',
+        inputSchema: {
+          listId: z.string().describe('ID of the list to watch/unwatch'),
+          subscribed: z.boolean().describe('Set to true to start watching, false to stop'),
+        },
+      },
+      async ({ listId, subscribed }) => {
+        try {
+          const list = await this.trelloClient.watchList(listId, subscribed);
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify(list, null, 2) }],
+          };
+        } catch (error) {
+          return this.handleError(error);
+        }
+      }
+    );
+
     // Move a card
     this.server.registerTool(
       'move_card',
@@ -679,6 +725,50 @@ class TrelloServer {
           );
           return {
             content: [{ type: 'text' as const, text: JSON.stringify(attachment, null, 2) }],
+          };
+        } catch (error) {
+          return this.handleError(error);
+        }
+      }
+    );
+
+    // ─── Get Card Attachments ──
+    this.server.registerTool(
+      'get_card_attachments',
+      {
+        title: 'Get Card Attachments',
+        description: 'Get all attachments from a specific card',
+        inputSchema: {
+          cardId: z.string().describe('ID of the card'),
+        },
+      },
+      async ({ cardId }) => {
+        try {
+          const attachments = await this.trelloClient.getCardAttachments(cardId);
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ attachments }, null, 2) }],
+          };
+        } catch (error) {
+          return this.handleError(error);
+        }
+      }
+    );
+
+    // ─── Get Card Checklists ──
+    this.server.registerTool(
+      'get_card_checklists',
+      {
+        title: 'Get Card Checklists',
+        description: 'Get all checklists on a card with their items and completion percentage',
+        inputSchema: {
+          cardId: z.string().describe('ID of the card'),
+        },
+      },
+      async ({ cardId }) => {
+        try {
+          const checklists = await this.trelloClient.getCardChecklists(cardId);
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ checklists }, null, 2) }],
           };
         } catch (error) {
           return this.handleError(error);
@@ -1475,6 +1565,60 @@ class TrelloServer {
       }
     );
 
+    // ─── Search Labels ──
+    this.server.registerTool(
+      'search_labels',
+      {
+        title: 'Search Labels',
+        description: 'Search labels on a board by name or color',
+        inputSchema: {
+          boardId: z
+            .string()
+            .optional()
+            .describe('ID of the Trello board (uses default if not provided)'),
+          query: z.string().describe('Search query to filter labels by name or color'),
+        },
+      },
+      async ({ boardId, query }) => {
+        try {
+          const labels = await this.trelloClient.searchLabels(boardId, query);
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ labels }, null, 2) }],
+          };
+        } catch (error) {
+          return this.handleError(error);
+        }
+      }
+    );
+
+    // ─── Remove Label from Card ──
+    this.server.registerTool(
+      'remove_label_from_card',
+      {
+        title: 'Remove Label from Card',
+        description: 'Remove a label from a specific card',
+        inputSchema: {
+          cardId: z.string().describe('ID of the card'),
+          labelId: z.string().describe('ID of the label to remove'),
+        },
+      },
+      async ({ cardId, labelId }) => {
+        try {
+          const success = await this.trelloClient.removeLabelFromCard(cardId, labelId);
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: success ? 'Label removed successfully' : 'Failed to remove label',
+              },
+            ],
+          };
+        } catch (error) {
+          return this.handleError(error);
+        }
+      }
+    );
+
     // Copy a card (supports cross-board copy)
     this.server.registerTool(
       'copy_card',
@@ -1764,7 +1908,6 @@ class TrelloServer {
         try {
           const result = await this.trelloClient.downloadAttachment(cardId, attachmentId);
 
-          // For images, return as image content type for direct viewing
           if (result.mimeType.startsWith('image/')) {
             return {
               content: [
@@ -1781,16 +1924,15 @@ class TrelloServer {
             };
           }
 
-          // For non-images, return base64 data as text
           return {
             content: [
               {
                 type: 'text' as const,
-                text: JSON.stringify({
-                  fileName: result.fileName,
-                  mimeType: result.mimeType,
-                  data: result.data,
-                }, null, 2),
+                text: JSON.stringify(
+                  { fileName: result.fileName, mimeType: result.mimeType, data: result.data },
+                  null,
+                  2
+                ),
               },
             ],
           };

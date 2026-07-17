@@ -19,6 +19,10 @@
   ],
   "author": "Jarad DeLorenzo",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/delorenj/mcp-server-trello.git"
+  },
   "bugs": {
     "url": "https://github.com/delorenj/mcp-server-trello/issues"
   },
@@ -34,6 +38,7 @@
     "@ai-sdk/openai": "^1.3.24",
     "@typescript-eslint/eslint-plugin": "^6.21.0",
     "@typescript-eslint/parser": "^6.21.0",
+    "@vitest/coverage-v8": "^4.1.10",
     "esbuild": "^0.27.3",
     "eslint": "^8.57.1",
     "eslint-config-prettier": "^9.1.2",
@@ -67,6 +72,7 @@
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",
     "test:smoke": "vitest run tests/smoke",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "publish": "npm run build && npm publish"
   }
