@@ -34,6 +34,16 @@ import { validateExternalUrl } from './url-validator.js';
 const CONFIG_DIR = path.join(process.env.HOME || process.env.USERPROFILE || '.', '.trello-mcp');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
+export interface DownloadedAttachment {
+  mimeType: string;
+  fileName: string;
+  /** Base64 contents; present only when not saving to disk */
+  data?: string;
+  /** Absolute path the file was written to; present only when saving to disk */
+  savedTo?: string;
+  bytes?: number;
+}
+
 type TrelloRequestReturn =
   | TrelloAction
   | TrelloAttachment
@@ -50,7 +60,8 @@ type TrelloRequestReturn =
   | TrelloWorkspace
   | TrelloCustomFieldDefinition
   | TrelloCustomFieldOption
-  | TrelloCustomFieldItem;
+  | TrelloCustomFieldItem
+  | DownloadedAttachment;
 
 export class TrelloClient {
   private axiosInstance: AxiosInstance;
@@ -231,6 +242,9 @@ export class TrelloClient {
           `Trello API Error: ${error.response?.status} ${error.message}`,
           error.response?.data
         );
+      } else if (error instanceof McpError) {
+        // Preserve intentional errors (validation, guardrails) instead of masking their messages
+        throw error;
       } else {
         throw new McpError(ErrorCode.InternalError, 'An unexpected error occurred');
       }
@@ -548,7 +562,7 @@ export class TrelloClient {
     imageUrl: string,
     name?: string
   ): Promise<TrelloAttachment> {
-    if (!imageUrl.startsWith('file://')) {
+    if (!attachments.isLocalSource(imageUrl)) {
       validateExternalUrl(imageUrl);
     }
     return this.handleRequest(() =>
@@ -587,7 +601,7 @@ export class TrelloClient {
     name?: string,
     mimeType?: string
   ): Promise<TrelloAttachment> {
-    if (!fileUrl.startsWith('file://')) {
+    if (!attachments.isLocalSource(fileUrl)) {
       validateExternalUrl(fileUrl);
     }
     return this.handleRequest(() =>
@@ -1393,12 +1407,14 @@ export class TrelloClient {
 
   /**
    * Download an attachment from a card with authentication.
-   * Returns base64-encoded data along with metadata.
+   * With savePath: streams to disk and returns metadata (no base64 in the result).
+   * Without: returns base64-encoded data along with metadata.
    */
   async downloadAttachment(
     cardId: string,
-    attachmentId: string
-  ): Promise<{ data: string; mimeType: string; fileName: string }> {
+    attachmentId: string,
+    savePath?: string
+  ): Promise<DownloadedAttachment> {
     return this.handleRequest(async () => {
       const encodedCardId = encodeURIComponent(cardId);
       const encodedAttachmentId = encodeURIComponent(attachmentId);
@@ -1407,19 +1423,32 @@ export class TrelloClient {
       );
       const attachment = metaResponse.data as Partial<TrelloAttachment> | null | undefined;
       const fileName = attachment?.fileName || 'attachment';
+      const mimeType = attachment?.mimeType || 'application/octet-stream';
 
       // Trello attachment downloads require OAuth header auth, not the key/token query params
       const downloadUrl = `https://api.trello.com/1/cards/${encodedCardId}/attachments/${encodedAttachmentId}/download/${encodeURIComponent(fileName)}`;
+      const authHeaders = {
+        Authorization: `OAuth oauth_consumer_key="${this.config.apiKey}", oauth_token="${this.config.token}"`,
+      };
+
+      if (savePath) {
+        const targetPath = await attachments.resolveSaveTarget(savePath, fileName);
+        const response = await this.axiosInstance.get(downloadUrl, {
+          headers: authHeaders,
+          responseType: 'stream',
+        });
+        const bytes = await attachments.streamToFile(response.data, targetPath);
+        return { mimeType, fileName, savedTo: targetPath, bytes };
+      }
+
       const response = await this.axiosInstance.get(downloadUrl, {
-        headers: {
-          Authorization: `OAuth oauth_consumer_key="${this.config.apiKey}", oauth_token="${this.config.token}"`,
-        },
+        headers: authHeaders,
         responseType: 'arraybuffer',
       });
 
       return {
         data: Buffer.from(response.data).toString('base64'),
-        mimeType: attachment?.mimeType || 'application/octet-stream',
+        mimeType,
         fileName,
       };
     });

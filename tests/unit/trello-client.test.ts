@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import axios from 'axios';
+import { Readable } from 'stream';
+import * as os from 'os';
+import * as path from 'path';
+import * as fsPromises from 'fs/promises';
 import { TrelloClient } from '../../src/trello-client.js';
 
 // Shared mock instance that axios.create will return
@@ -32,15 +36,19 @@ vi.mock('../../src/rate-limiter.js', () => ({
   }),
 }));
 
-// Mock fs/promises for config loading
-vi.mock('fs/promises', () => ({
-  mkdir: vi.fn(async () => {}),
-  readFile: vi.fn(async () => {
-    throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
-  }),
-  writeFile: vi.fn(async () => {}),
-  access: vi.fn(async () => {}),
-}));
+// Mock fs/promises for config loading; keep the rest real (stat etc. used by attachment save paths)
+vi.mock('fs/promises', async () => {
+  const actual = await vi.importActual<typeof import('fs/promises')>('fs/promises');
+  return {
+    ...actual,
+    mkdir: vi.fn(async () => {}),
+    readFile: vi.fn(async () => {
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    }),
+    writeFile: vi.fn(async () => {}),
+    access: vi.fn(async () => {}),
+  };
+});
 
 function createClient(overrides?: {
   boardId?: string;
@@ -836,6 +844,94 @@ describe('TrelloClient', () => {
       const form = mockAxiosInstance.post.mock.calls[0][1];
       expect(form.getBuffer().toString()).toContain('image/jpeg');
       expect(form.getBuffer().toString()).toContain('photo.jpg');
+    });
+  });
+
+  describe('attachFileToCard', () => {
+    it('should reject non-HTTPS remote URLs via SSRF validation', async () => {
+      const client = createClient();
+
+      await expect(
+        client.attachFileToCard(undefined, 'c1', 'http://example.com/doc.pdf')
+      ).rejects.toThrow(/Only HTTPS URLs are allowed/);
+      expect(mockAxiosInstance.post).not.toHaveBeenCalled();
+    });
+
+    it('should bypass SSRF URL validation for plain local paths', async () => {
+      // Make the mocked fs.access behave like the file is missing
+      vi.mocked(fsPromises.access).mockRejectedValueOnce(
+        Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+      );
+      const client = createClient();
+      const missing = path.join(os.tmpdir(), `client-missing-${Date.now()}.txt`);
+
+      // Reaches the local-upload branch (file check), not the URL validator
+      await expect(client.attachFileToCard(undefined, 'c1', missing)).rejects.toThrow(
+        /File not found/
+      );
+      expect(mockAxiosInstance.post).not.toHaveBeenCalled();
+    });
+
+    it('should bypass SSRF URL validation for ~/ paths', async () => {
+      vi.mocked(fsPromises.access).mockRejectedValueOnce(
+        Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+      );
+      const client = createClient();
+
+      await expect(
+        client.attachFileToCard(undefined, 'c1', `~/client-missing-${Date.now()}.txt`)
+      ).rejects.toThrow(/File not found/);
+      expect(mockAxiosInstance.post).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('downloadAttachment', () => {
+    const meta = { fileName: 'shot.png', mimeType: 'image/png' };
+
+    it('should return base64 data when savePath is omitted', async () => {
+      mockAxiosInstance.get
+        .mockResolvedValueOnce({ data: meta })
+        .mockResolvedValueOnce({ data: Buffer.from('png-bytes') });
+      const client = createClient();
+
+      const result = await client.downloadAttachment('c1', 'a1');
+
+      expect(result.data).toBe(Buffer.from('png-bytes').toString('base64'));
+      expect(result.mimeType).toBe('image/png');
+      expect(result.fileName).toBe('shot.png');
+      expect(result.savedTo).toBeUndefined();
+    });
+
+    it('should stream to disk and return metadata when savePath is set', async () => {
+      mockAxiosInstance.get
+        .mockResolvedValueOnce({ data: meta })
+        .mockResolvedValueOnce({ data: Readable.from('png-bytes') });
+      const client = createClient();
+
+      const dir = os.tmpdir();
+      const result = await client.downloadAttachment('c1', 'a1', dir);
+
+      try {
+        expect(result.savedTo).toBe(path.join(dir, 'shot.png'));
+        expect(result.bytes).toBe(Buffer.byteLength('png-bytes'));
+        expect(result.data).toBeUndefined();
+        // Second get call must request a stream
+        expect(mockAxiosInstance.get.mock.calls[1][1]).toMatchObject({
+          responseType: 'stream',
+        });
+      } finally {
+        const { unlink } = await vi.importActual<typeof import('fs/promises')>('fs/promises');
+        await unlink(path.join(dir, 'shot.png')).catch(() => {});
+      }
+    });
+
+    it('should reject a relative savePath', async () => {
+      mockAxiosInstance.get.mockResolvedValueOnce({ data: meta });
+      const client = createClient();
+
+      await expect(
+        client.downloadAttachment('c1', 'a1', 'relative/dir')
+      ).rejects.toThrow(/savePath must be an absolute path/);
     });
   });
 

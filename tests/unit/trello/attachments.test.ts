@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AxiosInstance } from 'axios';
+import { Readable } from 'stream';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
@@ -9,6 +10,10 @@ import {
   attachImageData,
   attachFile,
   getCardAttachments,
+  isLocalSource,
+  resolveLocalPath,
+  resolveSaveTarget,
+  streamToFile,
   MIME_TYPES,
 } from '../../../src/trello/attachments.js';
 
@@ -37,6 +42,41 @@ describe('attachments', () => {
       expect(MIME_TYPES['.md']).toBe('text/markdown');
       expect(MIME_TYPES['.pdf']).toBe('application/pdf');
       expect(MIME_TYPES['.png']).toBe('image/png');
+    });
+  });
+
+  describe('isLocalSource', () => {
+    it('recognizes local path forms', () => {
+      expect(isLocalSource('/Users/me/file.png')).toBe(true);
+      expect(isLocalSource('~/file.png')).toBe(true);
+      expect(isLocalSource('file:///Users/me/file.png')).toBe(true);
+      expect(isLocalSource('C:\\Users\\me\\file.png')).toBe(true);
+      expect(isLocalSource('D:/data/file.png')).toBe(true);
+    });
+
+    it('rejects URLs and relative paths', () => {
+      expect(isLocalSource('https://example.com/file.png')).toBe(false);
+      expect(isLocalSource('http://example.com/file.png')).toBe(false);
+      expect(isLocalSource('relative/file.png')).toBe(false);
+      expect(isLocalSource('./file.png')).toBe(false);
+    });
+  });
+
+  describe('resolveLocalPath', () => {
+    it('passes absolute paths through', () => {
+      expect(resolveLocalPath('/tmp/x.png')).toBe('/tmp/x.png');
+    });
+
+    it('expands ~/ to the home directory', () => {
+      expect(resolveLocalPath('~/x.png')).toBe(path.join(os.homedir(), 'x.png'));
+    });
+
+    it('converts file:// URLs', () => {
+      expect(resolveLocalPath('file:///tmp/x.png')).toBe('/tmp/x.png');
+    });
+
+    it('throws on malformed file:// URLs', () => {
+      expect(() => resolveLocalPath('file:///a%2Fb.png')).toThrow(/Invalid file URL/);
     });
   });
 
@@ -155,6 +195,52 @@ describe('attachments', () => {
       ).rejects.toThrow(/Invalid data URL/);
       expect(axiosInstance.post).not.toHaveBeenCalled();
     });
+
+    it('redirects to attach_file_to_card when data is a path to an existing file', async () => {
+      const tmpFile = path.join(os.tmpdir(), `attach-data-path-${Date.now()}.png`);
+      await fs.writeFile(tmpFile, 'png-bytes');
+      try {
+        const axiosInstance = createAxiosMock();
+
+        await expect(
+          attachData(axiosInstance, { cardId: 'c1', data: tmpFile })
+        ).rejects.toThrow(/file path.*attach_file_to_card/s);
+        expect(axiosInstance.post).not.toHaveBeenCalled();
+      } finally {
+        await fs.unlink(tmpFile).catch(() => {});
+      }
+    });
+
+    it('still accepts JPEG-style base64 starting with /9j/ when no such file exists', async () => {
+      const axiosInstance = createAxiosMock();
+
+      await attachData(axiosInstance, {
+        cardId: 'c1',
+        data: '/9j/4AAQSkZJRgABAQAASABIAAD/4QBMRXhpZg==',
+        name: 'photo.jpg',
+      });
+
+      expect(axiosInstance.post).toHaveBeenCalled();
+    });
+
+    it('rejects invalid base64 instead of silently uploading corrupt bytes', async () => {
+      const axiosInstance = createAxiosMock();
+
+      await expect(
+        attachData(axiosInstance, { cardId: 'c1', data: 'not-valid-base64!!!', name: 'x.png' })
+      ).rejects.toThrow(/Invalid base64/);
+      expect(axiosInstance.post).not.toHaveBeenCalled();
+    });
+
+    it('accepts base64 split across lines with whitespace', async () => {
+      const axiosInstance = createAxiosMock();
+      const b64 = Buffer.from('hello world hello world').toString('base64');
+      const split = `${b64.slice(0, 10)}\n${b64.slice(10)}`;
+
+      await attachData(axiosInstance, { cardId: 'c1', data: split, name: 'x.txt' });
+
+      expect(axiosInstance.post).toHaveBeenCalled();
+    });
   });
 
   describe('attachImageData', () => {
@@ -217,7 +303,7 @@ describe('attachments', () => {
 
       expect(axiosInstance.post).toHaveBeenCalledWith('/cards/c1/attachments', {
         url: 'https://example.com/notes.md',
-        name: 'File Attachment',
+        name: 'notes.md',
         mimeType: 'text/markdown',
       });
     });
@@ -258,18 +344,84 @@ describe('attachments', () => {
       expect(axiosInstance.post).not.toHaveBeenCalled();
     });
 
-    it('throws InvalidRequest on a malformed remote URL', async () => {
+    it('uploads a plain absolute path as multipart form data', async () => {
+      const tmpFile = path.join(os.tmpdir(), `attachments-plain-${Date.now()}.md`);
+      await fs.writeFile(tmpFile, '# plain path');
+      try {
+        const axiosInstance = createAxiosMock();
+
+        await attachFile(axiosInstance, { cardId: 'c1', fileUrl: tmpFile });
+
+        expect(axiosInstance.post).toHaveBeenCalledWith(
+          '/cards/c1/attachments',
+          expect.anything(),
+          expect.objectContaining({ headers: expect.any(Object) })
+        );
+        const form = (axiosInstance.post as ReturnType<typeof vi.fn>).mock.calls[0][1];
+        const fields = (form as unknown as { _streams: unknown[] })._streams.join('\n');
+        expect(fields).toContain('text/markdown');
+        expect(fields).toContain(path.basename(tmpFile));
+      } finally {
+        await fs.unlink(tmpFile).catch(() => {});
+      }
+    });
+
+    it('expands ~/ paths against the home directory', async () => {
+      const axiosInstance = createAxiosMock();
+      const missing = `~/does-not-exist-${Date.now()}.txt`;
+
+      // Routed as a local upload (fails file check with the resolved path, not URL parse)
+      await expect(
+        attachFile(axiosInstance, { cardId: 'c1', fileUrl: missing })
+      ).rejects.toThrow(new RegExp(`File not found: ${os.homedir()}`));
+      expect(axiosInstance.post).not.toHaveBeenCalled();
+    });
+
+    it('routes Windows drive paths to the local upload branch', async () => {
       const axiosInstance = createAxiosMock();
 
       await expect(
-        attachFile(axiosInstance, { cardId: 'c1', fileUrl: 'not-a-url' })
-      ).rejects.toThrow(/Invalid URL/);
+        attachFile(axiosInstance, { cardId: 'c1', fileUrl: 'C:\\missing\\file.txt' })
+      ).rejects.toThrow(/File not found/);
       expect(axiosInstance.post).not.toHaveBeenCalled();
+    });
+
+    it('rejects relative paths with a clear error listing accepted forms', async () => {
+      const axiosInstance = createAxiosMock();
+
+      await expect(
+        attachFile(axiosInstance, { cardId: 'c1', fileUrl: 'relative/file.txt' })
+      ).rejects.toThrow(/Unsupported file source.*absolute path/s);
+      expect(axiosInstance.post).not.toHaveBeenCalled();
+    });
+
+    it('rejects non-http schemes with a clear error', async () => {
+      const axiosInstance = createAxiosMock();
+
+      await expect(
+        attachFile(axiosInstance, { cardId: 'c1', fileUrl: 'ftp://example.com/file.txt' })
+      ).rejects.toThrow(/Unsupported file source/);
+      expect(axiosInstance.post).not.toHaveBeenCalled();
+    });
+
+    it('defaults the remote attachment name to the URL basename', async () => {
+      const axiosInstance = createAxiosMock();
+
+      await attachFile(axiosInstance, {
+        cardId: 'c1',
+        fileUrl: 'https://example.com/reports/q3-summary.pdf',
+      });
+
+      expect(axiosInstance.post).toHaveBeenCalledWith('/cards/c1/attachments', {
+        url: 'https://example.com/reports/q3-summary.pdf',
+        name: 'q3-summary.pdf',
+        mimeType: 'application/pdf',
+      });
     });
   });
 
   describe('attachImage', () => {
-    it('delegates to attachFile with a default name', async () => {
+    it('delegates to attachFile, defaulting the name to the URL basename', async () => {
       const axiosInstance = createAxiosMock();
 
       await attachImage(axiosInstance, {
@@ -279,7 +431,7 @@ describe('attachments', () => {
 
       expect(axiosInstance.post).toHaveBeenCalledWith('/cards/c1/attachments', {
         url: 'https://example.com/cat.png',
-        name: 'Image Attachment',
+        name: 'cat.png',
         mimeType: 'image/png',
       });
     });
@@ -328,6 +480,50 @@ describe('attachments', () => {
 
       expect(result).toEqual(attachments);
       expect(result).toBe(attachments);
+    });
+  });
+
+  describe('resolveSaveTarget', () => {
+    it('joins the attachment filename when savePath is an existing directory', async () => {
+      const target = await resolveSaveTarget(os.tmpdir(), 'shot.png');
+      expect(target).toBe(path.join(os.tmpdir(), 'shot.png'));
+    });
+
+    it('uses a non-directory savePath verbatim and creates parent dirs', async () => {
+      const dir = path.join(os.tmpdir(), `save-target-${Date.now()}`, 'nested');
+      const file = path.join(dir, 'out.bin');
+      try {
+        const target = await resolveSaveTarget(file, 'ignored.png');
+        expect(target).toBe(file);
+        const stat = await fs.stat(dir);
+        expect(stat.isDirectory()).toBe(true);
+      } finally {
+        await fs.rm(path.dirname(dir), { recursive: true, force: true });
+      }
+    });
+
+    it('expands ~/ in savePath', async () => {
+      const target = await resolveSaveTarget('~/Downloads', 'x.png');
+      expect(target.startsWith(os.homedir())).toBe(true);
+    });
+
+    it('rejects relative savePath', async () => {
+      await expect(resolveSaveTarget('relative/dir', 'x.png')).rejects.toThrow(
+        /savePath must be an absolute path/
+      );
+    });
+  });
+
+  describe('streamToFile', () => {
+    it('writes the stream to disk and returns the byte count', async () => {
+      const target = path.join(os.tmpdir(), `stream-to-file-${Date.now()}.txt`);
+      try {
+        const bytes = await streamToFile(Readable.from('stream contents'), target);
+        expect(bytes).toBe(Buffer.byteLength('stream contents'));
+        expect(await fs.readFile(target, 'utf8')).toBe('stream contents');
+      } finally {
+        await fs.unlink(target).catch(() => {});
+      }
     });
   });
 });

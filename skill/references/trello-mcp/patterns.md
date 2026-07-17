@@ -37,14 +37,20 @@ criteria in a checklist.
 
 ## Attach generated or external assets
 
-Use URL attachment tools when an asset is already hosted.
+For files on disk (screenshots, renders, reports), pass the file path directly
+— never convert to base64.
 
 1. Run `get_card` to verify the target card.
-2. Run `attach_image_to_card` for image URLs or `attach_file_to_card` for other
-   file URLs.
-3. Run `get_card` again and inspect attachments.
+2. Run `attach_file_to_card` with `filePath` set to the absolute path (works
+   for any size; the file is streamed). For hosted assets, pass the https URL
+   via `fileUrl` instead. `attach_image_to_card` works the same way for images.
+3. Run `get_card_attachments` to confirm.
 
-Use `attach_image_data_to_card` only when the image is available as base64 data.
+Use `attach_data_to_card` / `attach_image_data_to_card` only for bytes that
+exist purely in memory (never written to disk).
+
+To retrieve an attachment, run `download_attachment` with `savePath` to stream
+it to disk; omit `savePath` only to view an image inline.
 
 ## Comments for audit trails
 

@@ -39,7 +39,7 @@ class TrelloServer {
 
     this.server = new McpServer({
       name: 'trello-server',
-      version: '1.7.1',
+      version: '1.8.0',
     });
 
     this.setupTools();
@@ -62,6 +62,35 @@ class TrelloServer {
         },
       ],
       isError: true,
+    };
+  }
+
+  // Compact summary instead of the full Trello attachment JSON, which carries
+  // a ~10-entry previews array of URLs that just bloats agent context
+  private attachmentSummary(attachment: {
+    id: string;
+    name: string;
+    url: string;
+    bytes: number | null;
+    mimeType: string;
+  }) {
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: JSON.stringify(
+            {
+              id: attachment.id,
+              name: attachment.name,
+              url: attachment.url,
+              bytes: attachment.bytes,
+              mimeType: attachment.mimeType,
+            },
+            null,
+            2
+          ),
+        },
+      ],
     };
   }
 
@@ -542,12 +571,13 @@ class TrelloServer {
       }
     );
 
-    // Attach image to card (kept for backward compatibility)
+    // Attach image to card (local path or URL)
     this.server.registerTool(
       'attach_image_to_card',
       {
         title: 'Attach Image to Card',
-        description: 'Attach an image to a card from a URL on a specific board',
+        description:
+          'Attach an image to a card. For images on disk, pass the absolute file path via filePath (or imageUrl) — the file is streamed directly, no base64 conversion, works for images of any size. For web images, pass an https URL and Trello fetches it server-side.',
         inputSchema: {
           boardId: z
             .string()
@@ -556,37 +586,53 @@ class TrelloServer {
               'ID of the Trello board where the card exists (uses default if not provided)'
             ),
           cardId: z.string().describe('ID of the card to attach the image to'),
-          imageUrl: z.string().describe('URL of the image to attach'),
+          imageUrl: z
+            .string()
+            .optional()
+            .describe(
+              'Local file path (absolute, ~/path, or file://) or https URL of the image. Provide either this or filePath.'
+            ),
+          filePath: z
+            .string()
+            .optional()
+            .describe(
+              'Absolute path to a local image file (e.g. /Users/me/screenshot.png). Preferred for files on disk. Provide either this or imageUrl.'
+            ),
           name: z
             .string()
             .optional()
-            .default('Image Attachment')
-            .describe('Optional name for the attachment (defaults to "Image Attachment")'),
+            .describe('Optional name for the attachment (defaults to the image filename)'),
         },
       },
-      async ({ boardId, cardId, imageUrl, name }) => {
+      async ({ boardId, cardId, imageUrl, filePath, name }) => {
         try {
+          const source = filePath ?? imageUrl;
+          if (!source || (filePath && imageUrl)) {
+            throw new McpError(
+              ErrorCode.InvalidRequest,
+              'Provide exactly one of filePath (local file) or imageUrl (local path or https URL)'
+            );
+          }
           const attachment = await this.trelloClient.attachImageToCard(
             boardId,
             cardId,
-            imageUrl,
+            source,
             name
           );
-          return {
-            content: [{ type: 'text' as const, text: JSON.stringify(attachment, null, 2) }],
-          };
+          return this.attachmentSummary(attachment);
         } catch (error) {
           return this.handleError(error);
         }
       }
     );
 
-    // Attach file to card (generic file attachment)
+    // Attach file to card (local path or URL)
     this.server.registerTool(
       'attach_file_to_card',
       {
         title: 'Attach File to Card',
-        description: 'Attach any file to a card from a URL on a specific board',
+        description:
+          'Attach any file to a card. For files on disk, pass the absolute file path via filePath (or fileUrl) — the file is streamed directly, no base64 conversion, works for files of any size. For web files, pass an https URL and Trello fetches it server-side.',
         inputSchema: {
           boardId: z
             .string()
@@ -595,42 +641,49 @@ class TrelloServer {
               'ID of the Trello board where the card exists (uses default if not provided)'
             ),
           cardId: z.string().describe('ID of the card to attach the file to'),
-          fileUrl: z.string().describe('URL of the file to attach'),
+          fileUrl: z
+            .string()
+            .optional()
+            .describe(
+              'Local file path (absolute, ~/path, or file://) or https URL of the file. Provide either this or filePath.'
+            ),
+          filePath: z
+            .string()
+            .optional()
+            .describe(
+              'Absolute path to a local file (e.g. /Users/me/report.pdf). Preferred for files on disk. Provide either this or fileUrl.'
+            ),
           name: z
             .string()
             .optional()
-            .default('File Attachment')
-            .describe('Optional name for the attachment (defaults to "File Attachment")'),
+            .describe('Optional name for the attachment (defaults to the filename)'),
           mimeType: z
             .string()
             .optional()
             .describe(
-              'Optional MIME type of the file (e.g., "application/pdf", "text/plain", "video/mp4")'
+              'Optional MIME type of the file (e.g., "application/pdf", "text/plain", "video/mp4"). Inferred from the file extension if omitted.'
             ),
         },
       },
-      async ({ boardId, cardId, fileUrl, name, mimeType }) => {
+      async ({ boardId, cardId, fileUrl, filePath, name, mimeType }) => {
         try {
+          const source = filePath ?? fileUrl;
+          if (!source || (filePath && fileUrl)) {
+            throw new McpError(
+              ErrorCode.InvalidRequest,
+              'Provide exactly one of filePath (local file) or fileUrl (local path or https URL)'
+            );
+          }
           const attachment = await this.trelloClient.attachFileToCard(
             boardId,
             cardId,
-            fileUrl,
+            source,
             name,
             mimeType
           );
-          return {
-            content: [{ type: 'text' as const, text: JSON.stringify(attachment, null, 2) }],
-          };
+          return this.attachmentSummary(attachment);
         } catch (error) {
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: `Error: ${error instanceof Error ? error.message : 'Unknown error occurred'}`,
-              },
-            ],
-            isError: true,
-          };
+          return this.handleError(error);
         }
       }
     );
@@ -641,7 +694,7 @@ class TrelloServer {
       {
         title: 'Attach Data to Card',
         description:
-          'Attach binary data (image, markdown, PDF, text, etc.) to a card from base64-encoded data or a data URL. Use this for any non-image content. For image/screenshot uploads with PNG defaults, see attach_image_data_to_card.',
+          'Attach in-memory data to a card as a file, from base64 or a data URL. Only for content you generated in memory — if the content exists on disk, use attach_file_to_card with its path instead: no base64 conversion, no size limits.',
         inputSchema: {
           boardId: z
             .string()
@@ -653,7 +706,7 @@ class TrelloServer {
           data: z
             .string()
             .describe(
-              'Base64-encoded data or a data URL (e.g. data:text/markdown;base64,...). Any content type, not just images.'
+              'Base64-encoded data or a data URL (e.g. data:text/markdown;base64,...). Do NOT pass file paths here — use attach_file_to_card for files on disk.'
             ),
           name: z
             .string()
@@ -678,9 +731,7 @@ class TrelloServer {
             name,
             mimeType
           );
-          return {
-            content: [{ type: 'text' as const, text: JSON.stringify(attachment, null, 2) }],
-          };
+          return this.attachmentSummary(attachment);
         } catch (error) {
           return this.handleError(error);
         }
@@ -693,7 +744,7 @@ class TrelloServer {
       {
         title: 'Attach Image Data to Card',
         description:
-          'Attach an image to a card from base64 data or a data URL. Image-flavored convenience over attach_data_to_card: defaults assume PNG when mimeType/name are omitted, suitable for screenshot pasting. For non-image content, use attach_data_to_card.',
+          'Attach an in-memory image to a card from base64 or a data URL (PNG defaults). Only for image bytes you already hold in memory — if the image exists on disk (screenshot files, renders), use attach_file_to_card with its path instead: no base64 conversion, no size limits.',
         inputSchema: {
           boardId: z
             .string()
@@ -702,7 +753,11 @@ class TrelloServer {
               'ID of the Trello board where the card exists (uses default if not provided)'
             ),
           cardId: z.string().describe('ID of the card to attach the image to'),
-          imageData: z.string().describe('Base64 encoded image data or data URL (e.g., data:image/png;base64,...)'),
+          imageData: z
+            .string()
+            .describe(
+              'Base64 encoded image data or data URL (e.g., data:image/png;base64,...). Do NOT pass file paths here — use attach_file_to_card for images on disk.'
+            ),
           name: z
             .string()
             .optional()
@@ -723,9 +778,7 @@ class TrelloServer {
             name,
             mimeType
           );
-          return {
-            content: [{ type: 'text' as const, text: JSON.stringify(attachment, null, 2) }],
-          };
+          return this.attachmentSummary(attachment);
         } catch (error) {
           return this.handleError(error);
         }
@@ -1898,22 +1951,53 @@ class TrelloServer {
       'download_attachment',
       {
         title: 'Download Attachment',
-        description: 'Download an attachment from a card. Returns base64-encoded data that can be saved or viewed.',
+        description:
+          'Download an attachment from a card. To save the file to disk, pass savePath (preferred for non-image files and anything you intend to keep — avoids base64 in context). Omit savePath only to view an image inline.',
         inputSchema: {
           cardId: z.string().describe('ID of the card containing the attachment'),
           attachmentId: z.string().describe('ID of the attachment to download'),
+          savePath: z
+            .string()
+            .optional()
+            .describe(
+              'Absolute path to save the file to. A directory path uses the attachment\'s own filename. When set, the file is streamed to disk and only metadata is returned.'
+            ),
         },
       },
-      async ({ cardId, attachmentId }) => {
+      async ({ cardId, attachmentId, savePath }) => {
         try {
-          const result = await this.trelloClient.downloadAttachment(cardId, attachmentId);
+          const result = await this.trelloClient.downloadAttachment(
+            cardId,
+            attachmentId,
+            savePath
+          );
+
+          if (result.savedTo) {
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: JSON.stringify(
+                    {
+                      fileName: result.fileName,
+                      mimeType: result.mimeType,
+                      savedTo: result.savedTo,
+                      bytes: result.bytes,
+                    },
+                    null,
+                    2
+                  ),
+                },
+              ],
+            };
+          }
 
           if (result.mimeType.startsWith('image/')) {
             return {
               content: [
                 {
                   type: 'image' as const,
-                  data: result.data,
+                  data: result.data!,
                   mimeType: result.mimeType,
                 },
                 {

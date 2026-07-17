@@ -11,6 +11,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **List Position Management**: `update_list_position(listId, position)` - Reorder lists on a board using Trello's fractional indexing ("top", "bottom", or a numeric position)
 - **List Management**: `update_list(listId, name?, closed?, subscribed?, idBoard?)` - Update a list's name, closed state, subscription, or move it to a different board
 
+## [1.8.0] - 2026-07-16
+
+### Added
+- **First-Class File Attachments**: attach local files by plain path — no base64, no `file://` ceremony:
+  - `attach_file_to_card` / `attach_image_to_card` accept absolute paths (`/path/to/file`), `~/` paths, Windows drive paths, and `file://` URLs; files are streamed as multipart uploads (any size)
+  - New `filePath` parameter on both tools as the discoverable way to pass local files
+  - Attachment names default to the file basename (local) or URL basename (remote) instead of "File Attachment"/"Image Attachment"
+- **Download to Disk**: `download_attachment` accepts optional `savePath` — streams the file to disk and returns `{ fileName, mimeType, savedTo, bytes }` instead of inline base64; a directory `savePath` uses the attachment's own filename
+
+### Changed
+- Attach tools return a compact summary (`id`, `name`, `url`, `bytes`, `mimeType`) instead of the full Trello attachment JSON with its `previews` array
+- `attach_data_to_card` / `attach_image_data_to_card` descriptions now steer file-on-disk content to `attach_file_to_card`
+
+### Fixed
+- `attach_data_to_card` rejects invalid base64 instead of silently uploading corrupt bytes (`Buffer.from` drops invalid characters)
+- `attach_data_to_card` detects file paths passed as `data` and redirects to `attach_file_to_card`
+- Intentional validation errors (`McpError`) are no longer masked as "An unexpected error occurred"
+
 ## [1.7.0] - 2025-12-17
 
 ### Added

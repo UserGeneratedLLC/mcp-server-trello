@@ -54,8 +54,11 @@ Choose tools by workflow, not by guessing IDs.
   `update_checklist_item`, `delete_checklist_item`, `copy_checklist`.
 - Comments: `add_comment`, `update_comment`, `delete_comment`,
   `get_card_comments`.
-- Attachments: `attach_image_to_card`, `attach_file_to_card`,
-  `attach_image_data_to_card`, `download_attachment`.
+- Attachments: `attach_file_to_card` and `attach_image_to_card` (local file
+  path via `filePath` — preferred, no base64 — or https URL),
+  `attach_data_to_card` and `attach_image_data_to_card` (in-memory base64
+  only), `get_card_attachments`, `download_attachment` (pass `savePath` to
+  stream to disk).
 - Labels and members: `get_board_labels`, `create_label`, `update_label`,
   `delete_label`, `get_board_members`, `assign_member_to_card`,
   `remove_member_from_card`.

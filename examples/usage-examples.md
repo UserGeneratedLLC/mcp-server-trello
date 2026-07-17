@@ -350,18 +350,18 @@ await use_mcp_tool({
 ### Example 14: Attaching images to cards
 
 ```javascript
-// Attach a screenshot to a bug report card
+// Attach a local screenshot to a bug report card — just pass the path,
+// no base64 conversion, works for images of any size
 await use_mcp_tool({
   server_name: "trello",
   tool_name: "attach_image_to_card",
   arguments: {
     cardId: "bug-report-card-id",
-    imageUrl: "https://example.com/screenshots/bug-console-error.png",
-    name: "Console Error Screenshot"
+    filePath: "/Users/john/screenshots/bug-console-error.png"
   }
 });
 
-// Attach a design mockup
+// Attach a hosted design mockup by URL
 await use_mcp_tool({
   server_name: "trello",
   tool_name: "attach_image_to_card",
@@ -376,7 +376,17 @@ await use_mcp_tool({
 ### Example 15: Attaching various file types
 
 ```javascript
-// Attach a PDF document
+// Attach a local file directly by path (MIME type inferred from extension)
+await use_mcp_tool({
+  server_name: "trello",
+  tool_name: "attach_file_to_card",
+  arguments: {
+    cardId: "documentation-card-id",
+    filePath: "/Users/john/Documents/api-docs.md"
+  }
+});
+
+// Attach a hosted PDF document by URL
 await use_mcp_tool({
   server_name: "trello",
   tool_name: "attach_file_to_card",
@@ -388,7 +398,7 @@ await use_mcp_tool({
   }
 });
 
-// Attach a video recording
+// Attach a video recording by URL
 await use_mcp_tool({
   server_name: "trello",
   tool_name: "attach_file_to_card",
@@ -400,15 +410,14 @@ await use_mcp_tool({
   }
 });
 
-// Attach a local file
+// Download an attachment straight to disk (no base64 in the response)
 await use_mcp_tool({
   server_name: "trello",
-  tool_name: "attach_file_to_card",
+  tool_name: "download_attachment",
   arguments: {
-    cardId: "documentation-card-id",
-    fileUrl: "file:///Users/john/Documents/api-docs.md",
-    name: "API Documentation",
-    mimeType: "text/markdown"
+    cardId: "bug-report-card-id",
+    attachmentId: "attachment-id",
+    savePath: "/Users/john/Downloads"
   }
 });
 ```

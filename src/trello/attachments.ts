@@ -1,8 +1,10 @@
 import { AxiosInstance } from 'axios';
 import FormData from 'form-data';
 import * as fs from 'fs/promises';
+import * as os from 'os';
 import * as path from 'path';
-import { createReadStream } from 'fs';
+import { createReadStream, createWriteStream, existsSync } from 'fs';
+import { pipeline } from 'stream/promises';
 import { fileURLToPath } from 'url';
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { TrelloAttachment } from '../types.js';
@@ -78,11 +80,57 @@ function extensionFromMime(mimeType: string): string {
   return match?.[0] ?? '';
 }
 
+// Checked before URL parsing: Windows paths like C:\foo parse as valid URLs with protocol "c:"
+export function isLocalSource(source: string): boolean {
+  return (
+    source.startsWith('file://') ||
+    source.startsWith('/') ||
+    source.startsWith('~/') ||
+    /^[a-zA-Z]:[\\/]/.test(source)
+  );
+}
+
+export function resolveLocalPath(source: string): string {
+  if (source.startsWith('file://')) {
+    try {
+      return fileURLToPath(source);
+    } catch {
+      throw new McpError(ErrorCode.InvalidRequest, `Invalid file URL: ${source}`);
+    }
+  }
+  if (source.startsWith('~/')) {
+    return path.join(os.homedir(), source.slice(2));
+  }
+  return source;
+}
+
+function isPathToExistingFile(value: string): boolean {
+  if (!isLocalSource(value)) return false;
+  try {
+    return existsSync(resolveLocalPath(value));
+  } catch {
+    return false;
+  }
+}
+
 export interface AttachDataParams {
   cardId: string;
   data: string;
   name?: string;
   mimeType?: string;
+}
+
+// Allows whitespace since agents often split base64 payloads across lines
+const BASE64_RE = /^[A-Za-z0-9+/\s]*={0,2}\s*$/;
+
+function decodeBase64Strict(data: string, context: string): Buffer {
+  if (!BASE64_RE.test(data)) {
+    throw new McpError(
+      ErrorCode.InvalidRequest,
+      `Invalid base64 in ${context}. If this content is a file on disk, use attach_file_to_card with its path instead — no base64 needed.`
+    );
+  }
+  return Buffer.from(data, 'base64');
 }
 
 export async function attachData(
@@ -92,15 +140,23 @@ export async function attachData(
   let buffer: Buffer;
   let effectiveMimeType = mimeType;
 
+  // Path redirect: existence check avoids false positives (JPEG base64 starts with "/9j/")
+  if (isPathToExistingFile(data)) {
+    throw new McpError(
+      ErrorCode.InvalidRequest,
+      `"${data}" is a file path, not base64 data. Use attach_file_to_card with the path directly — no base64 conversion needed.`
+    );
+  }
+
   if (data.startsWith('data:')) {
-    const matches = data.match(/^data:([^;]+);base64,(.+)$/);
+    const matches = data.match(/^data:([^;]+);base64,(.+)$/s);
     if (!matches) {
       throw new McpError(ErrorCode.InvalidRequest, 'Invalid data URL format');
     }
     effectiveMimeType = effectiveMimeType || matches[1];
-    buffer = Buffer.from(matches[2], 'base64');
+    buffer = decodeBase64Strict(matches[2], 'data URL');
   } else {
-    buffer = Buffer.from(data, 'base64');
+    buffer = decodeBase64Strict(data, 'data parameter');
   }
 
   effectiveMimeType = effectiveMimeType || mimeFromFilename(name) || DEFAULT_MIME_TYPE;
@@ -148,22 +204,23 @@ export async function attachFile(
   axiosInstance: AxiosInstance,
   { cardId, fileUrl, name, mimeType }: AttachFileParams
 ): Promise<TrelloAttachment> {
-  if (fileUrl.startsWith('file://')) {
+  if (isLocalSource(fileUrl)) {
     return uploadLocalFile(axiosInstance, { cardId, fileUrl, name, mimeType });
   }
-  return attachRemoteUrl(axiosInstance, { cardId, fileUrl, name, mimeType });
+  if (fileUrl.startsWith('https://') || fileUrl.startsWith('http://')) {
+    return attachRemoteUrl(axiosInstance, { cardId, fileUrl, name, mimeType });
+  }
+  throw new McpError(
+    ErrorCode.InvalidRequest,
+    `Unsupported file source: ${fileUrl}. Use an absolute path (/path/to/file), ~/path, file:// URL, or https:// URL. Relative paths are not supported.`
+  );
 }
 
 async function uploadLocalFile(
   axiosInstance: AxiosInstance,
   { cardId, fileUrl, name, mimeType }: AttachFileParams
 ): Promise<TrelloAttachment> {
-  let localPath: string;
-  try {
-    localPath = fileURLToPath(fileUrl);
-  } catch {
-    throw new McpError(ErrorCode.InvalidRequest, `Invalid file URL: ${fileUrl}`);
-  }
+  const localPath = resolveLocalPath(fileUrl);
   const effectiveMimeType =
     mimeType || mimeFromFilename(localPath) || DEFAULT_MIME_TYPE;
 
@@ -201,9 +258,10 @@ async function attachRemoteUrl(
   const effectiveMimeType =
     mimeType || mimeFromFilename(remoteUrlPath) || DEFAULT_MIME_TYPE;
 
+  const urlBasename = path.posix.basename(remoteUrlPath);
   const response = await axiosInstance.post(`/cards/${cardId}/attachments`, {
     url: fileUrl,
-    name: name || 'File Attachment',
+    name: name || urlBasename || 'File Attachment',
     mimeType: effectiveMimeType,
   });
   return response.data;
@@ -219,11 +277,12 @@ export async function attachImage(
   axiosInstance: AxiosInstance,
   { cardId, imageUrl, name }: AttachImageParams
 ): Promise<TrelloAttachment> {
-  // attachFile auto-detects MIME type for images via the URL extension
+  // attachFile auto-detects MIME type via the path/URL extension; name defaults
+  // downstream to the file basename (local) or URL basename (remote)
   return attachFile(axiosInstance, {
     cardId,
     fileUrl: imageUrl,
-    name: name || 'Image Attachment',
+    name,
   });
 }
 
@@ -240,4 +299,33 @@ export async function getCardAttachments(
 ): Promise<TrelloAttachment[]> {
   const response = await axiosInstance.get(`/cards/${cardId}/attachments`);
   return response.data;
+}
+
+/**
+ * Resolve a download destination: a directory gets the attachment's own
+ * filename joined; otherwise the path is used as the target file verbatim.
+ */
+export async function resolveSaveTarget(savePath: string, fileName: string): Promise<string> {
+  if (!isLocalSource(savePath)) {
+    throw new McpError(
+      ErrorCode.InvalidRequest,
+      `savePath must be an absolute path, ~/path, or file:// URL, got: ${savePath}`
+    );
+  }
+  const resolved = resolveLocalPath(savePath);
+  const stat = await fs.stat(resolved).catch(() => null);
+  if (stat?.isDirectory()) {
+    return path.join(resolved, fileName);
+  }
+  await fs.mkdir(path.dirname(resolved), { recursive: true });
+  return resolved;
+}
+
+export async function streamToFile(
+  stream: NodeJS.ReadableStream,
+  targetPath: string
+): Promise<number> {
+  await pipeline(stream, createWriteStream(targetPath));
+  const stat = await fs.stat(targetPath);
+  return stat.size;
 }

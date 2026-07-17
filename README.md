@@ -586,57 +586,117 @@ s;   cardId: string,    // ID of the card to move
 }
 ```
 
-### attach\_image\_to\_card
+### attach\_file\_to\_card
 
-Attach an image to a card directly from a URL.
+Attach any file to a card. For files on disk, pass the absolute path — the file is streamed directly as a multipart upload, with no base64 conversion and no practical size limit. For web files, pass an https URL and Trello fetches it server-side.
 
 ```typescript
 {
-  name: 'attach_image_to_card',
-  arguments: {
-    boardId?: string, // Optional: ID of the board (uses default if not provided)
-    cardId: string,  nbsp; // ID of the card to attach the image to
-    imageUrl: string, // URL of the image to attach
-    name?: string     // Optional: Name for the attachment (defaults to "Image Attachment")
-  }
+  name: 'attach_file_to_card',
+  arguments: {
+    boardId?: string,  // Optional: ID of the board (uses default if not provided)
+    cardId: string,    // ID of the card to attach the file to
+    filePath?: string, // Absolute path to a local file (e.g. /Users/me/report.pdf). Preferred for files on disk.
+    fileUrl?: string,  // Alternative to filePath: local path (absolute, ~/path, file://) or https URL
+    name?: string,     // Optional: Name for the attachment (defaults to the filename)
+    mimeType?: string  // Optional: MIME type (inferred from the file extension if omitted)
+  }
 }
 ```
 
-### attach\_file\_to\_card
+Provide exactly one of `filePath` or `fileUrl`. Accepted local forms: `/absolute/path`, `~/path`, `file://` URLs, and Windows drive paths (`C:\...`). Relative paths are rejected.
 
-Attach any type of file to a card from a URL or a local file path (e.g., `file:///path/to/your/file.pdf`).
+```typescript
+// Attach a local screenshot — just pass the path
+{
+  name: 'attach_file_to_card',
+  arguments: {
+    cardId: 'abc123',
+    filePath: '/Users/me/screenshots/bug-repro.png'
+  }
+}
+```
+
+### attach\_image\_to\_card
+
+Attach an image to a card, from a local path or a URL. Same path handling as `attach_file_to_card`.
 
 ```typescript
 {
-  name: 'attach_file_to_card',
-nbsp; arguments: {
-    boardId?: string,  // Optional: ID of the board (uses default if not provided)
-    cardId: string,s;   // ID of the card to attach the file to
-    fileUrl: string,   // URL or local file path (using the file:// protocol) of the file to attach
-    name?: string,     // Optional: Name for the attachment (defaults to the file name for local files)
-    mimeType?: string  // Optional: MIME type (e.g., "application/pdf", "text/plain", "video/mp4")
-  }
+  name: 'attach_image_to_card',
+  arguments: {
+    boardId?: string,  // Optional: ID of the board (uses default if not provided)
+    cardId: string,    // ID of the card to attach the image to
+    filePath?: string, // Absolute path to a local image. Preferred for images on disk.
+    imageUrl?: string, // Alternative to filePath: local path or https URL of the image
+    name?: string      // Optional: Name for the attachment (defaults to the image filename)
+  }
+}
+```
+
+### attach\_data\_to\_card
+
+Attach in-memory data to a card as a file, from base64 or a data URL. Only for content generated in memory — if the content exists on disk, use `attach_file_to_card` with its path instead.
+
+```typescript
+{
+  name: 'attach_data_to_card',
+  arguments: {
+    boardId?: string,  // Optional: ID of the board (uses default if not provided)
+    cardId: string,    // ID of the card to attach the data to
+    data: string,      // Base64-encoded data or a data URL (never a file path)
+    name?: string,     // Filename including extension (e.g. "notes.md"). Defaults to "attachment-<timestamp>"
+    mimeType?: string  // MIME type (inferred from a data URL prefix or the filename extension if omitted)
+  }
+}
+```
+
+### attach\_image\_data\_to\_card
+
+Image-flavored variant of `attach_data_to_card` with PNG defaults. Same rule applies: images on disk go through `attach_file_to_card`.
+
+```typescript
+{
+  name: 'attach_image_data_to_card',
+  arguments: {
+    boardId?: string,  // Optional: ID of the board (uses default if not provided)
+    cardId: string,    // ID of the card to attach the image to
+    imageData: string, // Base64 encoded image data or data URL (never a file path)
+    name?: string,     // Optional: Name for the attachment
+    mimeType?: string  // Optional: MIME type (default: image/png)
+  }
+}
+```
+
+### get\_card\_attachments
+
+List all attachments on a card, including IDs usable with `download_attachment`.
+
+```typescript
+{
+  name: 'get_card_attachments',
+  arguments: {
+    cardId: string  // ID of the card
+  }
 }
 ```
 
 ### download\_attachment
 
-Download an attachment from a card by ID. Attachment IDs are available in the `attachments` array returned by `get_card`.
+Download an attachment from a card by ID. Attachment IDs are available from `get_card_attachments` or the `attachments` array returned by `get_card`.
 
 ```typescript
 {
   name: 'download_attachment',
   arguments: {
     cardId: string,       // ID of the card containing the attachment
-    attachmentId: string  // ID of the attachment to download
+    attachmentId: string, // ID of the attachment to download
+    savePath?: string     // Optional: absolute path to save the file to (a directory uses the attachment's own filename)
   }
 }
 ```
 
-**Returns:** For image attachments (`image/*`), returns the image as inline viewable data. For all other file types, returns a JSON object with:
-- `fileName`: Original filename
-- `mimeType`: MIME type of the file
-- `data`: Base64-encoded file contents
+**Returns:** With `savePath`, the file is streamed to disk and only metadata comes back: `{ fileName, mimeType, savedTo, bytes }` — use this for non-image files and anything you intend to keep. Without `savePath`, image attachments (`image/*`) return inline viewable data, and other file types return a JSON object with `fileName`, `mimeType`, and base64 `data`.
 
 ### Comment Management Tools
 

@@ -48,10 +48,12 @@ when selecting tools.
 - `update_comment`: Update a comment.
 - `delete_comment`: Delete a comment.
 - `get_card_comments`: List card comments.
-- `attach_image_to_card`: Attach an image by URL.
-- `attach_file_to_card`: Attach a file by URL.
-- `attach_image_data_to_card`: Attach base64 image data.
-- `download_attachment`: Download a card attachment.
+- `attach_file_to_card`: Attach a file from a local path (filePath, preferred for files on disk — no base64) or an https URL.
+- `attach_image_to_card`: Attach an image from a local path or an https URL.
+- `attach_data_to_card`: Attach in-memory data (base64/data URL); never for files on disk.
+- `attach_image_data_to_card`: Attach in-memory image data (base64, PNG defaults); never for images on disk.
+- `get_card_attachments`: List attachments on a card.
+- `download_attachment`: Download a card attachment; pass savePath to stream it to disk without base64.
 
 ## Labels and members
 
