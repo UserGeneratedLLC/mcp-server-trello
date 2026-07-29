@@ -662,9 +662,9 @@ export class TrelloClient {
   // Add Comment on Card
   async addCommentToCard(cardId: string, text: string): Promise<TrelloComment> {
     return this.handleRequest(async () => {
-      const response = await this.axiosInstance.post(
-        `cards/${cardId}/actions/comments?text=${encodeURIComponent(text)}`
-      );
+      const response = await this.axiosInstance.post(`/cards/${cardId}/actions/comments`, {
+        text,
+      });
       return response.data;
     });
   }
@@ -672,9 +672,7 @@ export class TrelloClient {
   // Update Comment
   async updateCommentOnCard(commentId: string, text: string): Promise<boolean> {
     return this.handleRequest(async () => {
-      const response = await this.axiosInstance.put(
-        `/actions/${commentId}?text=${encodeURIComponent(text)}`
-      );
+      const response = await this.axiosInstance.put(`/actions/${commentId}`, { text });
       if (response.status !== 200) {
         return false;
       }

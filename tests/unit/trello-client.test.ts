@@ -349,20 +349,21 @@ describe('TrelloClient', () => {
       const client = createClient();
       await client.addCommentToCard('c1', 'Hello');
 
-      expect(mockAxiosInstance.post).toHaveBeenCalledWith(
-        'cards/c1/actions/comments?text=Hello'
-      );
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith('/cards/c1/actions/comments', {
+        text: 'Hello',
+      });
     });
 
-    it('addCommentToCard should encode special characters', async () => {
+    it('addCommentToCard should keep long text out of the URL', async () => {
       mockAxiosInstance.post.mockResolvedValue({ data: { id: 'comment1' } });
 
       const client = createClient();
-      await client.addCommentToCard('c1', 'Hello World & Test');
+      const longText = 'a'.repeat(10000);
+      await client.addCommentToCard('c1', longText);
 
-      expect(mockAxiosInstance.post).toHaveBeenCalledWith(
-        'cards/c1/actions/comments?text=Hello%20World%20%26%20Test'
-      );
+      const [url, body] = mockAxiosInstance.post.mock.calls[0];
+      expect(url).toBe('/cards/c1/actions/comments');
+      expect(body).toEqual({ text: longText });
     });
 
     it('updateCommentOnCard should return true on success', async () => {
@@ -371,6 +372,9 @@ describe('TrelloClient', () => {
       const client = createClient();
       const result = await client.updateCommentOnCard('comment1', 'Updated text');
 
+      expect(mockAxiosInstance.put).toHaveBeenCalledWith('/actions/comment1', {
+        text: 'Updated text',
+      });
       expect(result).toBe(true);
     });
 

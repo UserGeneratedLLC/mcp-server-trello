@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **List Position Management**: `update_list_position(listId, position)` - Reorder lists on a board using Trello's fractional indexing ("top", "bottom", or a numeric position)
 - **List Management**: `update_list(listId, name?, closed?, subscribed?, idBoard?)` - Update a list's name, closed state, subscription, or move it to a different board
 
+### Fixed
+- `add_comment` and `update_comment` send the comment text in the request body instead of the URL query string, so comments approaching Trello's 16384-character limit no longer fail on URL length
+
 ## [1.8.0] - 2026-07-16
 
 ### Added
