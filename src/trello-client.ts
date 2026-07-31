@@ -219,6 +219,9 @@ export class TrelloClient {
 
   private static readonly MAX_RETRY_ATTEMPTS = 3;
 
+  /** Base64 inflates by ~4/3, so anything larger swamps the caller's context */
+  private static readonly MAX_INLINE_DOWNLOAD_BYTES = 10 * 1024 * 1024;
+
   private async handleRequest<T extends TrelloRequestReturn>(
     requestFn: () => Promise<T>,
     retryCount: number = 0
@@ -246,7 +249,10 @@ export class TrelloClient {
         // Preserve intentional errors (validation, guardrails) instead of masking their messages
         throw error;
       } else {
-        throw new McpError(ErrorCode.InternalError, 'An unexpected error occurred');
+        // Filesystem and stream failures land here; a generic message leaves callers
+        // with nothing to act on, so surface the underlying cause
+        const cause = error instanceof Error ? error.message : String(error);
+        throw new McpError(ErrorCode.InternalError, `An unexpected error occurred: ${cause}`);
       }
     }
   }
@@ -1422,6 +1428,15 @@ export class TrelloClient {
       const attachment = metaResponse.data as Partial<TrelloAttachment> | null | undefined;
       const fileName = attachment?.fileName || 'attachment';
       const mimeType = attachment?.mimeType || 'application/octet-stream';
+      const sizeBytes = attachment?.bytes;
+      const inlineLimit = TrelloClient.MAX_INLINE_DOWNLOAD_BYTES;
+
+      if (!savePath && typeof sizeBytes === 'number' && sizeBytes > inlineLimit) {
+        throw new McpError(
+          ErrorCode.InvalidRequest,
+          `"${fileName}" is ${Math.round(sizeBytes / 1024 / 1024)} MB, too large to return inline (limit ${inlineLimit / 1024 / 1024} MB). Pass savePath to stream it to disk instead.`
+        );
+      }
 
       // Trello attachment downloads require OAuth header auth, not the key/token query params
       const downloadUrl = `https://api.trello.com/1/cards/${encodedCardId}/attachments/${encodedAttachmentId}/download/${encodeURIComponent(fileName)}`;

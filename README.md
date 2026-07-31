@@ -691,12 +691,16 @@ Download an attachment from a card by ID. Attachment IDs are available from `get
   arguments: {
     cardId: string,       // ID of the card containing the attachment
     attachmentId: string, // ID of the attachment to download
-    savePath?: string     // Optional: absolute path to save the file to (a directory uses the attachment's own filename)
+    savePath?: string     // Optional: absolute path to save the file to; missing directories are created
   }
 }
 ```
 
+`savePath` is treated as a directory when it ends in a separator or has no file extension — the attachment's own filename is joined onto it. A path with an extension is used as the target file. Either way, missing directories are created for you.
+
 **Returns:** With `savePath`, the file is streamed to disk and only metadata comes back: `{ fileName, mimeType, savedTo, bytes }` — use this for non-image files and anything you intend to keep. Without `savePath`, image attachments (`image/*`) return inline viewable data, and other file types return a JSON object with `fileName`, `mimeType`, and base64 `data`.
+
+Attachments larger than 10 MB must use `savePath`; returning them inline is rejected because base64 encoding would swamp the caller's context.
 
 ### Comment Management Tools
 

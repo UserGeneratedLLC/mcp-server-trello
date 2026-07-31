@@ -302,8 +302,12 @@ export async function getCardAttachments(
 }
 
 /**
- * Resolve a download destination: a directory gets the attachment's own
- * filename joined; otherwise the path is used as the target file verbatim.
+ * Resolve a download destination, creating any missing directories.
+ *
+ * Directory intent: an existing directory, a trailing separator, or no file
+ * extension. Anything else is the target file itself. Callers routinely pass a
+ * per-card directory that does not exist yet, so guessing "file" on a failed
+ * stat silently wrote downloads into extension-less blobs.
  */
 export async function resolveSaveTarget(savePath: string, fileName: string): Promise<string> {
   if (!isLocalSource(savePath)) {
@@ -313,12 +317,21 @@ export async function resolveSaveTarget(savePath: string, fileName: string): Pro
     );
   }
   const resolved = resolveLocalPath(savePath);
-  const stat = await fs.stat(resolved).catch(() => null);
-  if (stat?.isDirectory()) {
-    return path.join(resolved, fileName);
+  const hasTrailingSeparator = /[\\/]$/.test(resolved);
+  // `|| resolved` keeps a bare root ("/") intact
+  const normalized = hasTrailingSeparator ? resolved.replace(/[\\/]+$/, '') || resolved : resolved;
+  const stat = await fs.stat(normalized).catch(() => null);
+
+  const isDirectory =
+    stat?.isDirectory() || (!stat && (hasTrailingSeparator || path.extname(normalized) === ''));
+
+  if (isDirectory) {
+    await fs.mkdir(normalized, { recursive: true });
+    return path.join(normalized, fileName);
   }
-  await fs.mkdir(path.dirname(resolved), { recursive: true });
-  return resolved;
+
+  await fs.mkdir(path.dirname(normalized), { recursive: true });
+  return normalized;
 }
 
 export async function streamToFile(

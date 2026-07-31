@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `add_comment` and `update_comment` send the comment text in the request body instead of the URL query string, so comments approaching Trello's 16384-character limit no longer fail on URL length
+- `download_attachment` creates missing `savePath` directories. A `savePath` naming a directory that did not exist yet was treated as a file path: with a trailing separator it failed outright with `ENOENT`, and without one it silently wrote the download into an extension-less file. A `savePath` is now a directory when it ends in a separator or has no file extension, and a file otherwise
+- Unexpected errors (filesystem and stream failures in particular) include the underlying cause instead of a bare "An unexpected error occurred"
+
+### Changed
+- `download_attachment` rejects inline downloads over 10 MB and directs the caller to `savePath`, rather than returning base64 that would swamp the caller's context
 
 ## [1.8.0] - 2026-07-16
 

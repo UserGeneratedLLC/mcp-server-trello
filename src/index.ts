@@ -1960,7 +1960,7 @@ class TrelloServer {
             .string()
             .optional()
             .describe(
-              'Absolute path to save the file to. A directory path uses the attachment\'s own filename. When set, the file is streamed to disk and only metadata is returned.'
+              'Absolute path to save the file to; missing directories are created. A directory path (trailing slash, or no file extension) uses the attachment\'s own filename; a path with an extension is used as the file itself. When set, the file is streamed to disk and only metadata is returned. Required for attachments over 10 MB.'
             ),
         },
       },

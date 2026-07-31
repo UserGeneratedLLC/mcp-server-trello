@@ -502,6 +502,42 @@ describe('attachments', () => {
       }
     });
 
+    it('creates a missing directory when savePath has a trailing separator', async () => {
+      const root = path.join(os.tmpdir(), `save-target-slash-${Date.now()}`);
+      const dir = path.join(root, 'pExMPaMj');
+      try {
+        const target = await resolveSaveTarget(`${dir}/`, 'clip.mp4');
+        expect(target).toBe(path.join(dir, 'clip.mp4'));
+        expect((await fs.stat(dir)).isDirectory()).toBe(true);
+      } finally {
+        await fs.rm(root, { recursive: true, force: true });
+      }
+    });
+
+    it('creates a missing extension-less directory and joins the filename', async () => {
+      const root = path.join(os.tmpdir(), `save-target-noext-${Date.now()}`);
+      const dir = path.join(root, 'pExMPaMj');
+      try {
+        const target = await resolveSaveTarget(dir, 'clip.mp4');
+        expect(target).toBe(path.join(dir, 'clip.mp4'));
+        expect((await fs.stat(dir)).isDirectory()).toBe(true);
+      } finally {
+        await fs.rm(root, { recursive: true, force: true });
+      }
+    });
+
+    it('treats a missing path with an extension as the target file', async () => {
+      const root = path.join(os.tmpdir(), `save-target-ext-${Date.now()}`);
+      const file = path.join(root, 'nested', 'clip.mp4');
+      try {
+        const target = await resolveSaveTarget(file, 'ignored.mp4');
+        expect(target).toBe(file);
+        expect((await fs.stat(path.dirname(file))).isDirectory()).toBe(true);
+      } finally {
+        await fs.rm(root, { recursive: true, force: true });
+      }
+    });
+
     it('expands ~/ in savePath', async () => {
       const target = await resolveSaveTarget('~/Downloads', 'x.png');
       expect(target.startsWith(os.homedir())).toBe(true);
@@ -523,6 +559,18 @@ describe('attachments', () => {
         expect(await fs.readFile(target, 'utf8')).toBe('stream contents');
       } finally {
         await fs.unlink(target).catch(() => {});
+      }
+    });
+
+    it('writes into a directory resolveSaveTarget had to create', async () => {
+      const root = path.join(os.tmpdir(), `stream-into-new-dir-${Date.now()}`);
+      try {
+        const target = await resolveSaveTarget(`${path.join(root, 'pExMPaMj')}/`, 'clip.mp4');
+        const bytes = await streamToFile(Readable.from('video bytes'), target);
+        expect(bytes).toBe(Buffer.byteLength('video bytes'));
+        expect(target).toBe(path.join(root, 'pExMPaMj', 'clip.mp4'));
+      } finally {
+        await fs.rm(root, { recursive: true, force: true });
       }
     });
   });

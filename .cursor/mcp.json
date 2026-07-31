@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "trello": {
+      "command": "bun",
+      "args": ["/Users/joe/workspace/tools/mcp-server-trello/src/index.ts"],
+      "envFile": "${userHome}/.cursor/.trello.env",
+      "env": {
+        "TRELLO_BOARD_ID": "69bf06a7c3c3a4fb6113eb7a"
+      }
+    }
+  }
+}

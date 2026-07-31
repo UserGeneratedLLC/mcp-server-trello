@@ -937,6 +937,50 @@ describe('TrelloClient', () => {
         client.downloadAttachment('c1', 'a1', 'relative/dir')
       ).rejects.toThrow(/savePath must be an absolute path/);
     });
+
+    it('should refuse to return an oversized attachment inline', async () => {
+      mockAxiosInstance.get.mockResolvedValueOnce({
+        data: { fileName: 'clip.mp4', mimeType: 'video/mp4', bytes: 101_495_850 },
+      });
+      const client = createClient();
+
+      await expect(client.downloadAttachment('c1', 'a1')).rejects.toThrow(
+        /too large to return inline.*Pass savePath/s
+      );
+      // Only the metadata request should have been made
+      expect(mockAxiosInstance.get).toHaveBeenCalledTimes(1);
+    });
+
+    it('should allow an oversized attachment when savePath is set', async () => {
+      mockAxiosInstance.get
+        .mockResolvedValueOnce({
+          data: { fileName: 'clip.mp4', mimeType: 'video/mp4', bytes: 101_495_850 },
+        })
+        .mockResolvedValueOnce({ data: Readable.from('video bytes') });
+      const client = createClient();
+
+      const dir = os.tmpdir();
+      try {
+        const result = await client.downloadAttachment('c1', 'a1', dir);
+        expect(result.savedTo).toBe(path.join(dir, 'clip.mp4'));
+        expect(result.data).toBeUndefined();
+      } finally {
+        const { unlink } = await vi.importActual<typeof import('fs/promises')>('fs/promises');
+        await unlink(path.join(dir, 'clip.mp4')).catch(() => {});
+      }
+    });
+
+    it('should surface the underlying cause when writing to disk fails', async () => {
+      mockAxiosInstance.get
+        .mockResolvedValueOnce({ data: meta })
+        .mockResolvedValueOnce({ data: Readable.from('png-bytes') });
+      const client = createClient();
+
+      // mkdir is mocked out in this suite, so the parent never exists
+      const missing = path.join(os.tmpdir(), `no-such-dir-${Date.now()}`, 'out.png');
+
+      await expect(client.downloadAttachment('c1', 'a1', missing)).rejects.toThrow(/ENOENT/);
+    });
   });
 
   describe('Config persistence', () => {
