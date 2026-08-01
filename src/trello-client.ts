@@ -566,6 +566,15 @@ export class TrelloClient {
     });
   }
 
+  async getCurrentMember(): Promise<TrelloMember> {
+    return this.handleRequest(async () => {
+      const response = await this.axiosInstance.get('/members/me', {
+        params: { fields: 'id,username,fullName,avatarUrl' },
+      });
+      return response.data;
+    });
+  }
+
   async attachImageToCard(
     boardId: string | undefined,
     cardId: string,

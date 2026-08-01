@@ -571,6 +571,27 @@ class TrelloServer {
       }
     );
 
+    // Identify the account behind this server's token
+    this.server.registerTool(
+      'get_current_member',
+      {
+        title: 'Get Current Member',
+        description:
+          "Identify the Trello account this server's token belongs to, returning its id, username and full name. Use it to act as the caller -- Trello's `me` alias only works in route segments, so tools taking a memberId (assign_member_to_card, remove_member_from_card) need the real id from here.",
+        inputSchema: {},
+      },
+      async () => {
+        try {
+          const member = await this.trelloClient.getCurrentMember();
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify(member, null, 2) }],
+          };
+        } catch (error) {
+          return this.handleError(error);
+        }
+      }
+    );
+
     // Attach image to card (local path or URL)
     this.server.registerTool(
       'attach_image_to_card',
