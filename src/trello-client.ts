@@ -478,7 +478,11 @@ export class TrelloClient {
   }
 
   async moveCard(boardId: string | undefined, cardId: string, listId: string, pos?: string | number): Promise<TrelloCard> {
-    const effectiveBoardId = boardId || this.defaultBoardId;
+    // Falls back through the active board before the env default, matching every
+    // other board-scoped method here. This call always sends idBoard, so reaching
+    // straight for defaultBoardId silently transferred cards to an unrelated
+    // board (and renumbered them) whenever the caller omitted boardId.
+    const effectiveBoardId = boardId || this.activeConfig.boardId || this.defaultBoardId;
     return this.handleRequest(async () => {
       const response = await this.axiosInstance.put(`/cards/${cardId}`, {
         idList: listId,
