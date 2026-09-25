@@ -19,14 +19,12 @@ export default defineConfig({
       // watermark so `main` stays green; `autoUpdate` raises these numbers as
       // coverage improves (never lowers them), so CI fails any PR that drops
       // coverage below the best we've ever achieved. Goal: climb all four to 70.
-      // Floors recalibrated to this fork's watermark (fork carries extra
-      // untested tools vs. upstream, which diluted upstream's numbers).
       thresholds: {
         autoUpdate: true,
-        lines: 20.9,
-        statements: 20.36,
-        functions: 30.43,
-        branches: 19.56,
+        lines: 27.39,
+        statements: 26.82,
+        functions: 38.12,
+        branches: 27.34,
       },
     },
   },

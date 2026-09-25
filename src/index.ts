@@ -2,7 +2,9 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
-import { z } from 'zod';
+// The SDK types its schemas against zod/v4; importing bare 'zod' yields the v3 API,
+// which makes registerTool's inference explode (TS2589) and OOMs tsc.
+import { z } from 'zod/v4';
 import { TrelloClient } from './trello-client.js';
 import { TrelloHealthEndpoints, HealthEndpointSchemas } from './health/health-endpoints.js';
 import { formatCardListResponse } from './card-list-preview.js';
@@ -39,7 +41,7 @@ class TrelloServer {
 
     this.server = new McpServer({
       name: 'trello-server',
-      version: '1.8.0',
+      version: '2.0.0-beta.0',
     });
 
     this.setupTools();
@@ -1293,7 +1295,8 @@ class TrelloServer {
       'get_acceptance_criteria',
       {
         title: 'Get Acceptance Criteria',
-        description: 'Get all items from the "Acceptance Criteria" checklist',
+        description:
+          'Get a card\'s (or board\'s) acceptance criteria. Matches a checklist named "Acceptance Criteria", "AC", "DoD", or "Definition of Done" (case-insensitive); first match in that order wins. Returns a {found: true|false} union; read reason when not found.',
         inputSchema: {
           cardId: z
             .string()
@@ -1307,9 +1310,9 @@ class TrelloServer {
       },
       async ({ cardId, boardId }) => {
         try {
-          const items = await this.trelloClient.getAcceptanceCriteria(cardId, boardId);
+          const result = await this.trelloClient.getAcceptanceCriteria(cardId, boardId);
           return {
-            content: [{ type: 'text' as const, text: JSON.stringify(items, null, 2) }],
+            content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
           };
         } catch (error) {
           return this.handleError(error);

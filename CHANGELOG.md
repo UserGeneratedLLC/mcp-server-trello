@@ -7,32 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Fork (UserGeneratedLLC) changes carried on top of upstream.
+
 ### Added
-- **List Position Management**: `update_list_position(listId, position)` - Reorder lists on a board using Trello's fractional indexing ("top", "bottom", or a numeric position)
-- **List Management**: `update_list(listId, name?, closed?, subscribed?, idBoard?)` - Update a list's name, closed state, subscription, or move it to a different board
+- `get_me` identifies the Trello account behind the server's token (id, username, full name) so member-id tools can act as the caller
+- `search_trello` searches cards and boards across the whole workspace via the Trello Search API
+- `delete_checklist` and `delete_checklist_item` (checklist-scoped); the card-scoped variant is `delete_checklist_item_by_card`
+- `get_card_attachments`, `get_card_checklists`, `search_labels` and `remove_label_from_card` stay registered in this fork: upstream 1.8.0 dropped them, but the fork's client implements all four
 
 ### Fixed
+- `move_card` falls back to the active board before the env default board, so omitting `boardId` no longer transfers the card to an unrelated board
 - `add_comment` and `update_comment` send the comment text in the request body instead of the URL query string, so comments approaching Trello's 16384-character limit no longer fail on URL length
 - `download_attachment` creates missing `savePath` directories. A `savePath` naming a directory that did not exist yet was treated as a file path: with a trailing separator it failed outright with `ENOENT`, and without one it silently wrote the download into an extension-less file. A `savePath` is now a directory when it ends in a separator or has no file extension, and a file otherwise
 - Unexpected errors (filesystem and stream failures in particular) include the underlying cause instead of a bare "An unexpected error occurred"
 
 ### Changed
 - `download_attachment` rejects inline downloads over 10 MB and directs the caller to `savePath`, rather than returning base64 that would swamp the caller's context
+- Built with esbuild under npm (`prepare` builds on install, so `npx github:UserGeneratedLLC/mcp-server-trello#<sha>` works); no Bun toolchain required
+
+## [2.0.0-beta.0] - 2026-08-04
+
+### Changed
+- **BREAKING — `get_acceptance_criteria` response shape**: the tool now returns a discriminated union instead of a bare `CheckListItem[]`. On a match it returns `{ found: true, items, unmet, percentComplete, matchedChecklistName }`; when no checklist matches it returns `{ found: false, reason, availableChecklists }` instead of an empty array. Callers that treated the result as an array (`.length`, `.map()`, iteration) must migrate to reading `.items` after checking `.found`. A checklist that matches but is empty returns `found: true` with `items: []`, so "no acceptance criteria" is now distinguishable from "the checklist is named something else"
+- **Acceptance criteria heading tolerance**: `get_acceptance_criteria` now recognizes checklists named `Acceptance Criteria`, `AC`, `DoD`, or `Definition of Done`, compared case-insensitively and whitespace-trimmed. Matching stays exact-equality against that alias set — no fuzzy, partial, or semantic matching. When several aliases are present the first in that precedence order wins, items from every checklist matching the winning alias are aggregated in Trello's order, and `matchedChecklistName` reports the board's own spelling. Previously only the literal name `Acceptance Criteria` was read, and any other heading silently returned an empty list
+
+## [1.8.1] - 2026-07-25
+
+### Fixed
+- **npm package failed to start via npx/bunx** ([#108](https://github.com/delorenj/mcp-server-trello/issues/108), [#109](https://github.com/delorenj/mcp-server-trello/issues/109)): v1.8.0's `bin` pointed at `src/index.ts` while `files` only shipped `build/**`, so the published tarball couldn't resolve its own imports and the server crashed on startup. `bin` points to `build/index.js` again and the published tarball is self-contained. Every install of `@latest` was affected; upgrading to 1.8.1 is the fix.
+
+### Changed
+- npm publishing now uses **Trusted Publishing (OIDC)** — no stored `NPM_TOKEN` (#106)
+- Publish workflow: removed the recursive `publish` lifecycle-script trap and added skip-if-already-published guards (#107)
+- Test and release maintenance hardening (#104)
 
 ## [1.8.0] - 2026-07-16
 
 ### Added
-- **First-Class File Attachments**: attach local files by plain path — no base64, no `file://` ceremony:
+- **List Position Management**: `update_list_position(listId, position)` - Reorder lists on a board using Trello's fractional indexing ("top", "bottom", or a numeric position)
+- **List Management**: `update_list(listId, name?, closed?, subscribed?, idBoard?)` - Update a list's name, closed state, subscription, or move it to a different board
+- **Activity Subscriptions**: `watch_card(cardId, subscribed)` and `watch_list(listId, subscribed)` - Subscribe to (or unsubscribe from) a card or list so its activity surfaces in your Trello notifications
+- **First-Class File Attachments** (fork): attach local files by plain path — no base64, no `file://` ceremony:
   - `attach_file_to_card` / `attach_image_to_card` accept absolute paths (`/path/to/file`), `~/` paths, Windows drive paths, and `file://` URLs; files are streamed as multipart uploads (any size)
   - New `filePath` parameter on both tools as the discoverable way to pass local files
   - Attachment names default to the file basename (local) or URL basename (remote) instead of "File Attachment"/"Image Attachment"
-- **Download to Disk**: `download_attachment` accepts optional `savePath` — streams the file to disk and returns `{ fileName, mimeType, savedTo, bytes }` instead of inline base64; a directory `savePath` uses the attachment's own filename
+- **Download to Disk** (fork): `download_attachment` accepts optional `savePath` — streams the file to disk and returns `{ fileName, mimeType, savedTo, bytes }` instead of inline base64; a directory `savePath` uses the attachment's own filename
 
 ### Changed
 - Attach tools return a compact summary (`id`, `name`, `url`, `bytes`, `mimeType`) instead of the full Trello attachment JSON with its `previews` array
 - `attach_data_to_card` / `attach_image_data_to_card` descriptions now steer file-on-disk content to `attach_file_to_card`
 
 ### Fixed
+- Restored the TypeScript type-check gate (`npm run typecheck`) and hardened the build so type errors fail loudly instead of shipping silently — resolves a `tsc` out-of-memory triggered by a zod v3/v4 mismatch against the MCP SDK
+- Removed four never-released tools that referenced non-existent client methods and would have thrown on first use (`get_card_attachments`, `get_card_checklists`, `search_labels`, `remove_label_from_card`) — upstream only; this fork keeps all four (see Unreleased)
 - `attach_data_to_card` rejects invalid base64 instead of silently uploading corrupt bytes (`Buffer.from` drops invalid characters)
 - `attach_data_to_card` detects file paths passed as `data` and redirects to `attach_file_to_card`
 - Intentional validation errors (`McpError`) are no longer masked as "An unexpected error occurred"

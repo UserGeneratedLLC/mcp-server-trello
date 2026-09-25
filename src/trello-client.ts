@@ -14,6 +14,7 @@ import {
   TrelloCheckItemUpdate,
   CheckList,
   CheckListItem,
+  AcceptanceCriteriaResult,
   TrelloComment,
   TrelloMember,
   TrelloLabelDetails,
@@ -30,6 +31,17 @@ import * as attachments from './trello/attachments.js';
 import * as checklists from './trello/checklists.js';
 import { validateExternalUrl } from './url-validator.js';
 
+/**
+ * Checklist names recognized as acceptance criteria, in precedence order.
+ * Matching is case-insensitive, whitespace-trimmed, exact equality — never fuzzy.
+ */
+export const ACCEPTANCE_CRITERIA_ALIASES = [
+  'Acceptance Criteria',
+  'AC',
+  'DoD',
+  'Definition of Done',
+] as const;
+
 // Path for storing active board/workspace configuration
 const CONFIG_DIR = path.join(process.env.HOME || process.env.USERPROFILE || '.', '.trello-mcp');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
@@ -43,25 +55,6 @@ export interface DownloadedAttachment {
   savedTo?: string;
   bytes?: number;
 }
-
-type TrelloRequestReturn =
-  | TrelloAction
-  | TrelloAttachment
-  | TrelloBoard
-  | TrelloCard
-  | TrelloCheckItem
-  | TrelloChecklist
-  | TrelloComment
-  | EnhancedTrelloCard
-  | TrelloSearchResult
-  | string
-  | boolean
-  | TrelloList
-  | TrelloWorkspace
-  | TrelloCustomFieldDefinition
-  | TrelloCustomFieldOption
-  | TrelloCustomFieldItem
-  | DownloadedAttachment;
 
 export class TrelloClient {
   private axiosInstance: AxiosInstance;
@@ -222,10 +215,9 @@ export class TrelloClient {
   /** Base64 inflates by ~4/3, so anything larger swamps the caller's context */
   private static readonly MAX_INLINE_DOWNLOAD_BYTES = 10 * 1024 * 1024;
 
-  private async handleRequest<T extends TrelloRequestReturn>(
-    requestFn: () => Promise<T>,
-    retryCount: number = 0
-  ): Promise<T> {
+  // T is unconstrained on purpose: it only threads the caller's return type through.
+  // A closed union here excluded every T[] and broke each new return shape.
+  private async handleRequest<T>(requestFn: () => Promise<T>, retryCount: number = 0): Promise<T> {
     try {
       return await requestFn();
     } catch (error) {
@@ -420,7 +412,7 @@ export class TrelloClient {
       name: string;
       description?: string;
       dueDate?: string;
-      dueReminder?: number;
+      dueReminder?: number | null;
       start?: string;
       labels?: string[];
     }
@@ -446,7 +438,7 @@ export class TrelloClient {
       name?: string;
       description?: string;
       dueDate?: string;
-      dueReminder?: number;
+      dueReminder?: number | null;
       start?: string;
       dueComplete?: boolean;
       labels?: string[];
@@ -843,8 +835,83 @@ export class TrelloClient {
     return matchingItems;
   }
 
-  async getAcceptanceCriteria(cardId?: string, boardId?: string): Promise<CheckListItem[]> {
-    return this.getChecklistItems('Acceptance Criteria', cardId, boardId);
+  /**
+   * Resolve every checklist visible in the requested scope: a single card when `cardId`
+   * is given, otherwise the whole board (explicit `boardId`, else the active board).
+   */
+  private async resolveChecklistsInScope(
+    cardId?: string,
+    boardId?: string
+  ): Promise<TrelloChecklist[]> {
+    if (cardId) {
+      const cardResponse = await this.axiosInstance.get<EnhancedTrelloCard>(`/cards/${cardId}`, {
+        params: { checklists: 'all' },
+      });
+      return cardResponse.data.checklists || [];
+    }
+
+    const effectiveBoardId = boardId || this.activeConfig.boardId;
+    if (!effectiveBoardId) {
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        'No board ID or card ID provided and no active board set'
+      );
+    }
+
+    const response = await this.axiosInstance.get<TrelloChecklist[]>(
+      `/boards/${effectiveBoardId}/checklists`
+    );
+    return response.data || [];
+  }
+
+  /**
+   * Read the acceptance criteria for a card (or board), tolerating the common
+   * checklist headings teams actually use: "Acceptance Criteria", "AC", "DoD",
+   * "Definition of Done" — matched case-insensitively after trimming.
+   *
+   * Deterministic tie-break: the first alias in precedence order that has any match
+   * wins; items from every checklist matching that winning alias are aggregated in
+   * API order; `matchedChecklistName` reports the board's own spelling of the first
+   * such checklist. When nothing matches, the caller gets an explicit not-found plus
+   * the checklist names that do exist — never a silent empty list.
+   */
+  async getAcceptanceCriteria(
+    cardId?: string,
+    boardId?: string
+  ): Promise<AcceptanceCriteriaResult> {
+    const checklists = await this.resolveChecklistsInScope(cardId, boardId);
+    const normalize = (name: string) => name.trim().toLowerCase();
+
+    for (const alias of ACCEPTANCE_CRITERIA_ALIASES) {
+      const matching = checklists.filter(
+        checklist => normalize(checklist.name || '') === normalize(alias)
+      );
+      if (matching.length === 0) continue;
+
+      const items = matching.flatMap(checklist =>
+        (checklist.checkItems || []).map(item => this.convertToCheckListItem(item, checklist.id))
+      );
+      const completeCount = items.filter(item => item.complete).length;
+
+      return {
+        found: true,
+        items,
+        percentComplete: items.length === 0 ? 0 : Math.round((completeCount / items.length) * 100),
+        unmet: items.filter(item => !item.complete),
+        matchedChecklistName: matching[0].name,
+      };
+    }
+
+    const scope = cardId ? 'card' : 'board';
+    const triedAliases = ACCEPTANCE_CRITERIA_ALIASES.map(alias => `"${alias}"`).join(', ');
+    return {
+      found: false,
+      reason:
+        `No checklist on this ${scope} matched a recognized acceptance-criteria name. ` +
+        `Tried (case-insensitive): ${triedAliases}. ` +
+        `Rename an existing checklist to one of those names, or create one, to make its criteria readable here.`,
+      availableChecklists: checklists.map(checklist => checklist.name),
+    };
   }
 
   async createChecklist(name: string, cardId: string): Promise<TrelloChecklist> {
@@ -1231,21 +1298,18 @@ export class TrelloClient {
   }
 
   async searchLabels(boardId: string | undefined, query: string): Promise<TrelloLabelDetails[]> {
-    const effectiveBoardId = boardId || this.activeConfig.boardId || this.defaultBoardId;
-    if (!effectiveBoardId) {
-      throw new McpError(
-        ErrorCode.InvalidParams,
-        'boardId is required when no default board is configured'
-      );
+    const labels = await this.getBoardLabels(boardId);
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) {
+      return [];
     }
-    return this.handleRequest(async () => {
-      const response = await this.axiosInstance.get(`/boards/${effectiveBoardId}/labels`);
-      const labels: TrelloLabelDetails[] = response.data;
-      const q = query.toLowerCase();
-      return labels.filter(
-        (l) =>
-          (l.name || '').toLowerCase().includes(q) ||
-          (l.color || '').toLowerCase().includes(q)
+
+    return labels.filter(label => {
+      const normalizedName = label.name.toLowerCase();
+      const normalizedColor = label.color?.toLowerCase() ?? '';
+
+      return (
+        normalizedName.includes(normalizedQuery) || normalizedColor.includes(normalizedQuery)
       );
     });
   }
